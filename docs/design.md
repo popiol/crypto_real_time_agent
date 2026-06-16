@@ -36,6 +36,12 @@ The Crypto Real-Time Agent is a locally-run Python application that continuously
                          ┌─────────────────────┐
                          │   Rule Analyzer     │
                          │  (prune / evolve)   │
+                         └──────────┬──────────┘
+                                    │
+                                    ▼
+                         ┌─────────────────────┐
+                         │   LLM Interface     │
+                         │  (LangChain)        │
                          └─────────────────────┘
 ```
 
@@ -207,7 +213,40 @@ New rules are introduced manually by editing `strategy.py`. The threshold for au
 
 ---
 
-## 9. Scheduler / Main Loop
+## 9. LLM Interface
+
+The agent uses a large language model for tasks that benefit from natural language reasoning: interpreting rule performance summaries, suggesting new rule candidates, and explaining why signals were or were not profitable.
+
+### 9.1 Framework
+
+All model calls are made through **LangChain**, which abstracts over model providers and handles prompt templating. This makes the underlying model swappable via configuration without changing application code.
+
+### 9.2 Model
+
+Default model: `gemini-2.0-flash` (via `langchain-google-genai`). The model name is read from `config.yaml` and passed to the LangChain chat model constructor at startup.
+
+### 9.3 Structured output
+
+All LLM responses that feed into application logic are parsed into **Pydantic models** using LangChain's `.with_structured_output()` method. This ensures type safety and eliminates ad-hoc string parsing. Example output models:
+
+```python
+class RuleSuggestion(BaseModel):
+    rule_id: str
+    description: str
+    rationale: str
+    suggested_code: str
+
+class PerformanceInterpretation(BaseModel):
+    summary: str
+    rules_to_deprecate: list[str]
+    rules_to_investigate: list[str]
+```
+
+Free-form outputs (e.g., explanations shown to the user) are returned as plain strings and are not parsed.
+
+---
+
+## 10. Scheduler / Main Loop
 
 The main process runs a cooperative loop with the following periodic tasks:
 
@@ -221,7 +260,7 @@ The main process runs a cooperative loop with the following periodic tasks:
 
 ---
 
-## 10. Configuration
+## 11. Configuration
 
 A single `config.yaml` at the project root controls:
 
@@ -230,10 +269,12 @@ A single `config.yaml` at the project root controls:
 - Hot-tier max tick retention count
 - Rule deprecation threshold and minimum signal count
 - Data directory path
+- LLM model name (default: `gemini-2.0-flash`)
+- Backtesting data directory (default: `../crypto_alerts_llm/data/raw`)
 
 ---
 
-## 11. Open Questions / Future Work
+## 12. Open Questions / Future Work
 
 - **Storage backend**: start with flat JSON files; migrate to SQLite if query performance degrades.
 - **Signal deduplication**: if the same rule fires on consecutive ticks, subsequent signals from that rule for the same pair are suppressed for 24 hours.
