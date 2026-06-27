@@ -34,14 +34,14 @@ The Crypto Real-Time Agent is a locally-run Python application that continuously
                                     │
                                     ▼
                          ┌─────────────────────┐
-                         │   Rule Analyzer     │
-                         │  (prune / evolve)   │
+                         │  Strategy Updater   │
+                         │  (LLM pipeline)     │
                          └──────────┬──────────┘
                                     │
                                     ▼
                          ┌─────────────────────┐
-                         │   LLM Interface     │
-                         │  (LangChain)        │
+                         │   strategy.py       │
+                         │  (active rules)     │
                          └─────────────────────┘
 ```
 
@@ -186,63 +186,141 @@ A background job runs every hour and:
 
 ---
 
-## 8. Rule Analyzer
+## 8. Strategy Updater
 
-A periodic (e.g., daily) analysis job reads the completed signal records and produces a per-rule performance summary:
+A periodic LLM-driven pipeline that evaluates strategy performance and evolves `strategy.py` autonomously. It runs as a sequence of steps, each persisting its output to a local file so the pipeline is resumable and auditable.
 
-| Metric | Description |
+### 8.1 Persistence artifacts
+
+| File | Contents |
 |---|---|
-| `signal_count` | Total signals emitted |
-| `avg_gain_24h` | Average final gain after 24 h |
-| `avg_max_gain_24h` | Average peak gain available within 24 h |
-| `positive_rate` | Fraction of signals with `gain_24h > 0` |
-| `score` | Composite score (TBD formula) |
+| `data/state/signal_evaluation.json` | Aggregated interpretation of recent signal outcomes |
+| `data/state/rule_evaluation.json` | Per-rule scoring and status based on signal history |
+| `data/state/conclusions.json` | Strategic conclusions derived from the latest rule evaluation |
+| `data/state/long_term_plan.json` | Evolving high-level direction for the strategy |
+| `data/state/idea_backlog.json` | Pool of rule ideas with status (`proposed`, `evaluated`, `implemented`, `rejected`) |
 
-### 8.1 Rule lifecycle
+### 8.2 Pipeline steps
+
+All steps that involve reasoning use the LLM (see section 9). Steps run sequentially; each reads its inputs from persisted files and writes its output before the next step begins.
+
+#### Step 1 — Analyze results
+*Inputs*: signal ledger (signals with filled-in outcomes)  
+*Output*: `signal_evaluation.json`
+
+Aggregates the signal outcome data into a structured summary: overall win rate, average and max gains by pair, by time of day, by market conditions at signal time. Identifies patterns in which signals performed well or poorly.
+
+#### Step 2 — Analyze current rules
+*Inputs*: `signal_evaluation.json`, current rule definitions in `strategy.py`  
+*Output*: `rule_evaluation.json`
+
+For each active and candidate rule: computes signal count, average gain, max gain, positive rate, and a composite score. Determines whether each rule has enough data to be scored. Flags rules that fall below the deprecation threshold.
+
+#### Step 3 — Derive conclusions
+*Inputs*: `rule_evaluation.json`, current rule definitions in `strategy.py`  
+*Output*: `conclusions.json`
+
+Interprets the rule evaluation holistically: what kinds of signals tend to work, what market conditions correlate with good outcomes, what structural weaknesses exist in the current rule set.
+
+#### Step 4 — Update long term plan
+*Inputs*: `conclusions.json`, existing `long_term_plan.json`  
+*Output*: `long_term_plan.json` (updated)
+
+Revises the strategic direction for the agent based on the latest conclusions. The plan is a persistent document that accumulates knowledge across many update cycles.
+
+#### Step 5 — Generate ideas
+*Inputs*: `long_term_plan.json`, `idea_backlog.json`  
+*Output*: `idea_backlog.json` (new entries appended)
+
+Ensures the backlog has sufficient open ideas (status `proposed` or `evaluated`). Each LLM call generates exactly one idea (description, rationale, pseudocode) and is repeated until one of the following stop conditions is met:
+- There are at least 3 open ideas **and** the highest-scored open idea has a score ≥ 0.6.
+- 3 new ideas have been generated in this cycle (cap per run).
+
+If both conditions are already satisfied at the start of the step, it is skipped entirely. New ideas are added with status `proposed`.
+
+#### Step 6 — Evaluate ideas
+*Inputs*: `long_term_plan.json`, `idea_backlog.json`  
+*Output*: `idea_backlog.json` (scores and status updated)
+
+In a single LLM call, scores **all** ideas in the backlog — both newly `proposed` and previously `evaluated` — against the long term plan, estimated feasibility, and potential signal quality. Re-evaluating existing ideas allows scores to be revised in light of updated conclusions and plan. Sets a score (0–1) for each idea, marks low-potential ones as `rejected`, and marks the rest as `evaluated`.
+
+#### Step 7 — Select and implement one idea
+*Inputs*: `idea_backlog.json`, current `strategy.py`  
+*Output*: `strategy.py` (new rule appended and registered), `idea_backlog.json` (idea marked `implemented`)
+
+Selects the highest-scored ready idea, generates the complete rule function code, appends it to `strategy.py`, and registers it in the active rule list. At most one rule is added per pipeline run to keep changes reviewable. Rules deprecated in step 2 are simultaneously unregistered (function kept in file for traceability, removed from the registry).
+
+### 8.3 Rule lifecycle
 
 ```
-[candidate] → [active] → [deprecated] → [removed]
+[proposed in backlog] → [implemented / candidate] → [active] → [deprecated]
 ```
 
-- **Candidate**: newly added rule, not yet scored (fewer than N signals, configurable).
-- **Active**: rule with enough signal history; remains active while score is above threshold.
-- **Deprecated**: score fell below threshold; no longer called by `find_buy_signals`, but kept in the module for traceability.
-- **Removed**: manually pruned from the module after review.
-
-New rules are introduced manually by editing `strategy.py`. The threshold for automatic deprecation is configurable.
+- **Proposed**: idea exists in the backlog, not yet in `strategy.py`.
+- **Candidate**: rule added to `strategy.py` but below the minimum signal threshold to be scored.
+- **Active**: rule has enough signal history and score is above the deprecation threshold.
+- **Deprecated**: score fell below threshold; unregistered from `find_buy_signals` but kept in the file.
 
 ---
 
 ## 9. LLM Interface
 
-The agent uses a large language model for tasks that benefit from natural language reasoning: interpreting rule performance summaries, suggesting new rule candidates, and explaining why signals were or were not profitable.
+All model calls across the Strategy Updater pipeline are made through **LangChain**, which abstracts over providers and handles prompt templating. The underlying model is swappable via configuration without changing application code.
 
-### 9.1 Framework
-
-All model calls are made through **LangChain**, which abstracts over model providers and handles prompt templating. This makes the underlying model swappable via configuration without changing application code.
-
-### 9.2 Model
+### 9.1 Model
 
 Default model: `gemini-2.0-flash` (via `langchain-google-genai`). The model name is read from `config.yaml` and passed to the LangChain chat model constructor at startup.
 
-### 9.3 Structured output
+### 9.2 Structured output
 
-All LLM responses that feed into application logic are parsed into **Pydantic models** using LangChain's `.with_structured_output()` method. This ensures type safety and eliminates ad-hoc string parsing. Example output models:
+All LLM responses that feed into application logic are parsed into **Pydantic models** using LangChain's `.with_structured_output()`. Each pipeline step has its own output model. Examples:
 
 ```python
-class RuleSuggestion(BaseModel):
+class SignalEvaluation(BaseModel):
+    overall_positive_rate: float
+    avg_gain_24h: float
+    avg_max_gain_24h: float
+    notes: str
+
+class RuleScore(BaseModel):
     rule_id: str
+    signal_count: int
+    avg_gain_24h: float
+    positive_rate: float
+    score: float
+    status: Literal["candidate", "active", "deprecate"]
+
+class RuleEvaluation(BaseModel):
+    rules: list[RuleScore]
+    summary: str
+
+class Conclusions(BaseModel):
+    what_works: str
+    what_doesnt: str
+    open_questions: str
+
+class LongTermPlan(BaseModel):
+    direction: str
+    priorities: list[str]
+    updated_at: str
+
+class RuleIdea(BaseModel):
+    idea_id: str
+    title: str
     description: str
     rationale: str
-    suggested_code: str
+    pseudocode: str
+    score: float | None
+    status: Literal["proposed", "evaluated", "implemented", "rejected"]
 
-class PerformanceInterpretation(BaseModel):
-    summary: str
-    rules_to_deprecate: list[str]
-    rules_to_investigate: list[str]
+class IdeaBacklog(BaseModel):
+    ideas: list[RuleIdea]
+
+class ImplementedRule(BaseModel):
+    idea_id: str
+    rule_id: str
+    code: str
 ```
-
-Free-form outputs (e.g., explanations shown to the user) are returned as plain strings and are not parsed.
 
 ---
 
@@ -256,7 +334,7 @@ The main process runs a cooperative loop with the following periodic tasks:
 | Downsample hot → warm tier | Every hour |
 | Recompute cold-tier statistics | Every hour (after warm downsampling) |
 | Evaluate pending signal outcomes | Every hour |
-| Analyze rule performance | Every 24 hours |
+| Run Strategy Updater pipeline (all 7 steps) | Every 24 hours |
 
 ---
 
@@ -267,8 +345,9 @@ A single `config.yaml` at the project root controls:
 - Tracked pairs (e.g., `["XBTUSD", "ETHUSD"]`)
 - Poll interval and backoff parameters
 - Hot-tier max tick retention count
-- Rule deprecation threshold and minimum signal count
+- Rule deprecation threshold and minimum signal count for scoring
 - Data directory path
+- State directory path (default: `data/state/`)
 - LLM model name (default: `gemini-2.0-flash`)
 - Backtesting data directory (default: `../crypto_alerts_llm/data/raw`)
 

@@ -1,0 +1,62 @@
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class OrderBookLevel(BaseModel):
+    price: float
+    volume: float
+    timestamp: int
+
+
+class OrderBook(BaseModel):
+    asks: list[OrderBookLevel]
+    bids: list[OrderBookLevel]
+
+
+class Tick(BaseModel):
+    """A single poll snapshot for one currency pair."""
+
+    pair: str
+    polled_at: datetime
+
+    # Last trade
+    last_price: float
+
+    # Best bid / ask from Ticker
+    bid_price: float
+    bid_volume: float
+    ask_price: float
+    ask_volume: float
+
+    # Derived
+    mid_price: float
+    spread_abs: float  # ask - bid
+    spread_rel: float  # (ask - bid) / mid  * 100  (%)
+
+    # Top-5 order book (from Depth endpoint)
+    order_book: OrderBook | None = None
+
+
+class BuySignal(BaseModel):
+    pair: str
+    rule_id: str
+    timestamp: datetime
+    price: float
+    confidence: float | None = None
+
+
+class AppConfig(BaseModel):
+    pairs: list[str]
+    data_dir: str = "data"
+    state_dir: str = "data/state"
+    backtest_data_dir: str = "../crypto_alerts_llm/data/raw"
+    hot_tier_retention_seconds: int = 300
+    min_poll_interval_seconds: float = 1.0
+    backoff_initial_seconds: float = 2.0
+    backoff_max_seconds: float = 60.0
+    llm_model: str = "gemini-2.0-flash"
+    rule_min_signals: int = 20
+    rule_deprecation_threshold: float = 0.3

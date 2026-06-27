@@ -1,0 +1,24 @@
+pairs:
+  - XBTUSD
+  - ETHUSD
+
+data_dir: data
+state_dir: data/state
+backtest_data_dir: ../crypto_alerts_llm/data/raw
+
+# Hot tier: keep ticks from the last N seconds (5 minutes default)
+hot_tier_retention_seconds: 300
+
+# Polling: minimum seconds to wait between cycles regardless of how fast analysis runs
+min_poll_interval_seconds: 1
+
+# Exponential backoff on rate-limit responses
+backoff_initial_seconds: 2
+backoff_max_seconds: 60
+
+# LLM
+llm_model: gemini-2.0-flash
+
+# Rule scoring
+rule_min_signals: 20          # signals required before a rule can be scored
+rule_deprecation_threshold: 0.3  # composite score below this → deprecated
