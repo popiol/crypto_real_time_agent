@@ -16,8 +16,8 @@ import time
 import uuid
 from pathlib import Path
 
-from src.agent import collector, evaluator, storage
-from src.agent.models import AppConfig, BuySignal, PairData, SellSignal
+from src.agent import backtest_collector, collector, evaluator, storage
+from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
 from src.strategy.strategy import find_signals
 from src.updater import pipeline as updater_pipeline
 
@@ -62,7 +62,10 @@ def _refresh_tiers(pairs: set[str], config: AppConfig) -> None:
         logger.exception("Signal evaluation failed")
 
 
-def _collect_ticks(config: AppConfig) -> list:
+def _collect_ticks(config: AppConfig) -> list[Tick] | None:
+    """Return ticks for this cycle, or None to signal exhaustion (test mode only)."""
+    if config.test_mode:
+        return backtest_collector.next_snapshot(config)
     try:
         return collector.collect(config)
     except Exception:
@@ -70,25 +73,31 @@ def _collect_ticks(config: AppConfig) -> list:
         return []
 
 
-def _persist_ticks(ticks: list, config: AppConfig) -> None:
+def _persist_ticks(ticks: list[Tick], config: AppConfig) -> None:
     if not ticks:
         return
+    reference_time = ticks[0].polled_at if config.test_mode else None
     try:
-        storage.write_ticks(ticks, config)
+        storage.write_ticks(ticks, config, reference_time=reference_time)
     except Exception:
         logger.exception("Storage write failed")
 
 
 def _maybe_refresh_tiers(
-    ticks: list, cycle_start: float, last_refresh: float, config: AppConfig
+    ticks: list[Tick], cycle_start: float, last_refresh: float, config: AppConfig
 ) -> float:
-    if ticks and cycle_start - last_refresh >= _WARM_REFRESH_INTERVAL_S:
+    should_refresh = ticks and (
+        config.test_mode or cycle_start - last_refresh >= _WARM_REFRESH_INTERVAL_S
+    )
+    if should_refresh:
         _refresh_tiers({t.pair for t in ticks}, config)
         return cycle_start
     return last_refresh
 
 
 def _maybe_run_updater(cycle_start: float, last_run: float, config: AppConfig) -> float:
+    if config.test_mode:
+        return last_run
     if cycle_start - last_run >= _UPDATER_INTERVAL_S:
         try:
             updater_pipeline.run(config)
@@ -144,12 +153,17 @@ def run(config: AppConfig) -> None:
         cycle_start = time.monotonic()
 
         ticks = _collect_ticks(config)
+        if ticks is None:
+            logger.info("Backtest data exhausted — stopping")
+            break
+
         _persist_ticks(ticks, config)
         last_warm_refresh = _maybe_refresh_tiers(ticks, cycle_start, last_warm_refresh, config)
         last_updater_run = _maybe_run_updater(cycle_start, last_updater_run, config)
         _persist_signals(_run_strategy(ticks, config), ledger_path)
 
-        elapsed = time.monotonic() - cycle_start
-        sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)
-        if sleep_for:
-            time.sleep(sleep_for)
+        if not config.test_mode:
+            elapsed = time.monotonic() - cycle_start
+            sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)
+            if sleep_for:
+                time.sleep(sleep_for)

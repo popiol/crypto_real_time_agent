@@ -96,8 +96,16 @@ def downsample_hot_to_warm(pair: str, config: AppConfig) -> None:
     write_warm_candles(_merge_into_candles(existing, ticks), pair, config)
 
 
-def write_ticks(ticks: list[Tick], config: AppConfig) -> None:
-    """Append ticks to the hot tier and prune entries outside the retention window."""
+def write_ticks(
+    ticks: list[Tick],
+    config: AppConfig,
+    reference_time: datetime | None = None,
+) -> None:
+    """Append ticks to the hot tier and prune entries outside the retention window.
+
+    reference_time overrides datetime.now() for the pruning cutoff, used in
+    test mode where tick timestamps are historical rather than current.
+    """
     for tick in ticks:
         path = _hot_path(config.data_dir, tick.pair)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,9 +113,8 @@ def write_ticks(ticks: list[Tick], config: AppConfig) -> None:
             fh.write(tick.model_dump_json() + "\n")
 
     affected_pairs = {t.pair for t in ticks}
-    cutoff = datetime.now(timezone.utc) - timedelta(
-        seconds=config.hot_tier_retention_seconds
-    )
+    now = reference_time or datetime.now(timezone.utc)
+    cutoff = now - timedelta(seconds=config.hot_tier_retention_seconds)
     for pair in affected_pairs:
         _prune_and_downsample(pair, cutoff, config)
 

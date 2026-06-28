@@ -86,6 +86,7 @@ class SellSignal(BaseModel):
 
 class AppConfig(BaseModel):
     pairs: list[str] | None = None  # None → auto-discover all *USD pairs from Kraken
+    test_mode: bool = False
     data_dir: str = "data"
     state_dir: str = "data/state"
     backtest_data_dir: str = "../crypto_alerts_llm/data/raw"
