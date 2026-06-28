@@ -3,36 +3,42 @@
 find_buy_signals() is the only public entry point. It calls every registered
 rule function and merges the results.
 
-Rules are registered by adding their function to ACTIVE_RULES below.
-Deprecated rules are kept in this file but removed from ACTIVE_RULES.
+To add a rule: create src/strategy/rules/rule_NN_<name>.py, then import its
+function below and append it to ACTIVE_RULES.
 """
 
 from __future__ import annotations
 
 import logging
 
-from src.agent.models import BuySignal, Tick
+from src.agent.models import BuySignal, PairData
+from src.strategy.rules.rule_01_spread_compression import spread_compression_spike
+from src.strategy.rules.rule_02_bollinger_band import bollinger_band_lower_touch
+from src.strategy.rules.rule_03_ou_spread import ou_spread_compression
+from src.strategy.rules.rule_04_arima_forecast import arima_price_forecast
+from src.strategy.rules.rule_05_fft_cycle import fft_cycle_trough
+from src.strategy.rules.rule_06_kalman_velocity import kalman_velocity_reversal
 
 # ---------------------------------------------------------------------------
 # Type alias for the data passed to each rule
 # ---------------------------------------------------------------------------
 
-# MarketData: dict mapping pair name → list of hot-tier ticks (most recent last)
-MarketData = dict[str, list[Tick]]
+# MarketData: maps pair name → PairData (hot + warm tiers)
+MarketData = dict[str, PairData]
 
 
 # ---------------------------------------------------------------------------
 # Rule registry
 # ---------------------------------------------------------------------------
 
-ACTIVE_RULES: list = []  # populated below after rule definitions
-
-
-# ---------------------------------------------------------------------------
-# Rules
-# ---------------------------------------------------------------------------
-
-# (no rules yet — the Strategy Updater will add them here)
+ACTIVE_RULES = [
+    spread_compression_spike,
+    bollinger_band_lower_touch,
+    ou_spread_compression,
+    arima_price_forecast,
+    fft_cycle_trough,
+    kalman_velocity_reversal,
+]
 
 
 # ---------------------------------------------------------------------------

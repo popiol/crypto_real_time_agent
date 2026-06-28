@@ -12,13 +12,45 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from src.agent.models import AppConfig, Tick
+from src.agent.models import AppConfig, Tick, WarmCandle
 
 logger = logging.getLogger(__name__)
 
 
 def _hot_path(data_dir: str, pair: str) -> Path:
     return Path(data_dir) / pair / "hot.ndjson"
+
+
+def _warm_path(data_dir: str, pair: str) -> Path:
+    return Path(data_dir) / pair / "warm.json"
+
+
+def read_warm_candles(pair: str, config: AppConfig) -> list[WarmCandle]:
+    path = _warm_path(config.data_dir, pair)
+    if not path.exists():
+        return []
+    with path.open("r", encoding="utf-8") as fh:
+        raw = json.load(fh)
+    candles: list[WarmCandle] = []
+    for entry in raw:
+        try:
+            candles.append(WarmCandle.model_validate(entry))
+        except Exception as exc:
+            logger.warning("Skipping malformed warm candle for %s: %s", pair, exc)
+    return candles
+
+
+def write_warm_candles(candles: list[WarmCandle], pair: str, config: AppConfig) -> None:
+    path = _warm_path(config.data_dir, pair)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_suffix(".json.tmp")
+    try:
+        with tmp_path.open("w", encoding="utf-8") as fh:
+            json.dump([c.model_dump(mode="json") for c in candles], fh)
+        os.replace(tmp_path, path)
+    except Exception:
+        logger.exception("Failed to write warm candles for %s", pair)
+        tmp_path.unlink(missing_ok=True)
 
 
 def write_ticks(ticks: list[Tick], config: AppConfig) -> None:

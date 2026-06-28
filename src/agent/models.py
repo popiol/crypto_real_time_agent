@@ -40,6 +40,20 @@ class Tick(BaseModel):
     order_book: OrderBook | None = None
 
 
+class WarmCandle(BaseModel):
+    hour: datetime
+    open_price: float
+    high: float
+    low: float
+    close: float
+    avg_spread_rel: float = 0.0
+
+
+class PairData(BaseModel):
+    hot: list[Tick] = []
+    warm: list[WarmCandle] = []
+
+
 class BuySignal(BaseModel):
     pair: str
     rule_id: str
@@ -49,7 +63,7 @@ class BuySignal(BaseModel):
 
 
 class AppConfig(BaseModel):
-    pairs: list[str]
+    pairs: list[str] | None = None  # None → auto-discover all *USD pairs from Kraken
     data_dir: str = "data"
     state_dir: str = "data/state"
     backtest_data_dir: str = "../crypto_alerts_llm/data/raw"

@@ -12,12 +12,14 @@ from datetime import datetime, timezone
 
 import httpx
 
-from src.agent.models import AppConfig, OrderBook, OrderBookLevel, Tick
+from src.agent.models import AppConfig, OrderBook, OrderBookLevel, Tick, WarmCandle
 
 logger = logging.getLogger(__name__)
 
 _TICKER_URL = "https://api.kraken.com/0/public/Ticker"
 _DEPTH_URL = "https://api.kraken.com/0/public/Depth"
+_ASSET_PAIRS_URL = "https://api.kraken.com/0/public/AssetPairs"
+_OHLC_URL = "https://api.kraken.com/0/public/OHLC"
 
 # Kraken returns this error string on rate limiting
 _RATE_LIMIT_ERROR = "EGeneral:Too many requests"
@@ -63,16 +65,62 @@ def _fetch_with_backoff(
         return data["result"]
 
 
+def fetch_warm_candles(pair: str, config: AppConfig) -> list[WarmCandle]:
+    """Fetch the last 24 hourly OHLC candles for a pair from Kraken."""
+    with httpx.Client() as client:
+        result = _fetch_with_backoff(
+            client,
+            _OHLC_URL,
+            {"pair": pair, "interval": 60},
+            config.backoff_initial_seconds,
+            config.backoff_max_seconds,
+        )
+    # The result dict has one pair key plus "last" (a timestamp); skip "last"
+    key = next((k for k in result if k != "last"), None)
+    if key is None:
+        return []
+
+    candles: list[WarmCandle] = []
+    for entry in result[key][-24:]:
+        try:
+            candles.append(
+                WarmCandle(
+                    hour=datetime.fromtimestamp(int(entry[0]), tz=timezone.utc),
+                    open_price=float(entry[1]),
+                    high=float(entry[2]),
+                    low=float(entry[3]),
+                    close=float(entry[4]),
+                )
+            )
+        except (IndexError, ValueError) as exc:
+            logger.warning("Skipping malformed OHLC entry for %s: %s", pair, exc)
+    return candles
+
+
+def _fetch_usd_pairs(client: httpx.Client) -> list[str]:
+    """Return altnames of all active Kraken spot pairs quoted in USD."""
+    response = client.get(_ASSET_PAIRS_URL, timeout=10.0)
+    response.raise_for_status()
+    data = response.json()
+    return [
+        info["altname"]
+        for info in data["result"].values()
+        if info.get("wsname", "").endswith("/USD")
+    ]
+
+
 def collect(config: AppConfig) -> list[Tick]:
     """Fetch one snapshot for every configured pair.
 
     Returns a list of Tick objects, one per pair. Pairs that fail to parse
     are skipped with a warning rather than aborting the whole cycle.
     """
-    pairs_param = ",".join(config.pairs)
     polled_at = datetime.now(timezone.utc)
 
     with httpx.Client() as client:
+        pairs = config.pairs or _fetch_usd_pairs(client)
+        pairs_param = ",".join(pairs)
+
         # --- Ticker: one request for all pairs ---
         ticker_result = _fetch_with_backoff(
             client,
@@ -84,7 +132,7 @@ def collect(config: AppConfig) -> list[Tick]:
 
         ticks: list[Tick] = []
 
-        for pair in config.pairs:
+        for pair in pairs:
             # Kraken may return the pair under an internal alias; find the matching key
             ticker_key = _find_key(ticker_result, pair)
             if ticker_key is None:

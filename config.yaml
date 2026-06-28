@@ -1,7 +1,3 @@
-pairs:
-  - XBTUSD
-  - ETHUSD
-
 data_dir: data
 state_dir: data/state
 backtest_data_dir: ../crypto_alerts_llm/data/raw

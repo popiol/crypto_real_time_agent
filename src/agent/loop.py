@@ -17,7 +17,7 @@ import uuid
 from pathlib import Path
 
 from src.agent import collector, storage
-from src.agent.models import AppConfig, BuySignal
+from src.agent.models import AppConfig, BuySignal, PairData
 from src.strategy.strategy import find_buy_signals
 
 logger = logging.getLogger(__name__)
@@ -39,10 +39,25 @@ def _append_signals(signals: list[BuySignal], ledger_path: Path) -> None:
             fh.write(json.dumps(record) + "\n")
 
 
+_WARM_REFRESH_INTERVAL_S = 3600.0
+
+
+def _refresh_warm_tier(pairs: set[str], config: AppConfig) -> None:
+    logger.info("Refreshing warm tier for %d pairs", len(pairs))
+    for pair in pairs:
+        try:
+            candles = collector.fetch_warm_candles(pair, config)
+            storage.write_warm_candles(candles, pair, config)
+        except Exception:
+            logger.exception("Warm refresh failed for %s", pair)
+
+
 def run(config: AppConfig) -> None:
     """Start the polling loop. Runs until interrupted."""
     ledger_path = Path(config.data_dir) / "signals.ndjson"
-    logger.info("Starting polling loop. Pairs: %s", config.pairs)
+    logger.info("Starting polling loop. Pairs: %s", config.pairs or "auto-discover all USD pairs")
+
+    last_warm_refresh = 0.0
 
     while True:
         cycle_start = time.monotonic()
@@ -61,10 +76,19 @@ def run(config: AppConfig) -> None:
             except Exception:
                 logger.exception("Storage write failed")
 
+        # --- 2b. Refresh warm tier (hourly) ---
+        if ticks and cycle_start - last_warm_refresh >= _WARM_REFRESH_INTERVAL_S:
+            _refresh_warm_tier({t.pair for t in ticks}, config)
+            last_warm_refresh = cycle_start
+
         # --- 3. Run strategy ---
         try:
             market_data = {
-                tick.pair: storage.read_ticks(tick.pair, config) for tick in ticks
+                tick.pair: PairData(
+                    hot=storage.read_ticks(tick.pair, config),
+                    warm=storage.read_warm_candles(tick.pair, config),
+                )
+                for tick in ticks
             }
             signals: list[BuySignal] = find_buy_signals(market_data)
         except Exception:
