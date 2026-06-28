@@ -1,29 +1,25 @@
-"""Rule 02 — Mean reversion: Bollinger Band lower touch.
+"""Rule 02 — Mean reversion: Bollinger Band touch.
 
-Emits a buy signal when the current price drops below the lower Bollinger Band
-(mean − K·σ) computed from the last 24 hourly close prices in the warm tier,
-indicating an unusually large downward deviation that may revert.
+Buy signal:  price below lower band (mean − K·σ) → downward overextension, expect reversion up.
+Sell signal: price above upper band (mean + K·σ) → upward overextension, expect reversion down.
 """
 
 from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData
+from src.agent.models import BuySignal, PairData, SellSignal
 
 RULE_ID = "bollinger_band_lower_touch"
 
-# Band width multiplier (standard value is 2.0)
 K = 2.0
-
-# Minimum warm candles required for reliable statistics
 MIN_CANDLES = 10
 
 MarketData = dict[str, PairData]
 
 
-def bollinger_band_lower_touch(data: MarketData) -> list[BuySignal]:
-    signals: list[BuySignal] = []
+def bollinger_band_lower_touch(data: MarketData) -> list[BuySignal | SellSignal]:
+    signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
         if not pair_data.hot or len(pair_data.warm) < MIN_CANDLES:
@@ -36,17 +32,12 @@ def bollinger_band_lower_touch(data: MarketData) -> list[BuySignal]:
         if std == 0:
             continue
 
-        lower_band = mean - K * std
         current_price = pair_data.hot[-1].last_price
+        ts = pair_data.hot[-1].polled_at
 
-        if current_price < lower_band:
-            signals.append(
-                BuySignal(
-                    pair=pair,
-                    rule_id=RULE_ID,
-                    timestamp=pair_data.hot[-1].polled_at,
-                    price=current_price,
-                )
-            )
+        if current_price < mean - K * std:
+            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+        elif current_price > mean + K * std:
+            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
 
     return signals

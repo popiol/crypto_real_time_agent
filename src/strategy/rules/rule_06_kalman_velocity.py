@@ -2,10 +2,10 @@
 
 Runs a constant-velocity Kalman filter over the hot-tier tick prices to
 produce a noise-filtered velocity (rate of price change) estimate at each
-tick. Emits a buy signal when:
-  1. The filtered velocity has just crossed from negative to positive
-     (momentum reversal), AND
-  2. The current price is below the warm-tier mean close (price is depressed).
+tick.
+
+Buy signal:  velocity just crossed negative → positive AND price below warm mean.
+Sell signal: velocity just crossed positive → negative AND price above warm mean.
 
 State vector: x = [price, velocity]
 Observation:  z = last_price  (scalar)
@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData
+from src.agent.models import BuySignal, PairData, SellSignal
 
 RULE_ID = "kalman_velocity_reversal"
 
@@ -94,8 +94,8 @@ def _run_kalman(prices: list[float]) -> list[float]:
     return velocities
 
 
-def kalman_velocity_reversal(data: MarketData) -> list[BuySignal]:
-    signals: list[BuySignal] = []
+def kalman_velocity_reversal(data: MarketData) -> list[BuySignal | SellSignal]:
+    signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
         ticks = pair_data.hot
@@ -103,29 +103,18 @@ def kalman_velocity_reversal(data: MarketData) -> list[BuySignal]:
             continue
 
         velocities = _run_kalman([t.last_price for t in ticks])
-
-        # Condition 1: current velocity is positive (momentum turned upward)
-        if velocities[-1] <= 0:
-            continue
-
-        # Condition 1 (cont.): velocity was negative within the recent window
+        current_velocity = velocities[-1]
         recent_prior = velocities[-CROSS_WINDOW:-1]
-        if not recent_prior or min(recent_prior) >= 0:
+        if not recent_prior:
             continue
 
-        # Condition 2: current price is below warm-tier mean (price is depressed)
         warm_mean = statistics.mean(c.close for c in pair_data.warm)
         current_price = ticks[-1].last_price
-        if current_price >= warm_mean:
-            continue
+        ts = ticks[-1].polled_at
 
-        signals.append(
-            BuySignal(
-                pair=pair,
-                rule_id=RULE_ID,
-                timestamp=ticks[-1].polled_at,
-                price=current_price,
-            )
-        )
+        if current_velocity > 0 and min(recent_prior) < 0 and current_price < warm_mean:
+            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+        elif current_velocity < 0 and max(recent_prior) > 0 and current_price > warm_mean:
+            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
 
     return signals

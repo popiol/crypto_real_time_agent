@@ -73,6 +73,14 @@ class BuySignal(BaseModel):
     confidence: float | None = None
 
 
+class SellSignal(BaseModel):
+    pair: str
+    rule_id: str
+    timestamp: datetime
+    price: float
+    confidence: float | None = None
+
+
 class AppConfig(BaseModel):
     pairs: list[str] | None = None  # None → auto-discover all *USD pairs from Kraken
     data_dir: str = "data"

@@ -1,8 +1,14 @@
 """Signal outcome evaluator.
 
-Runs every hour. For each signal in the ledger that is older than 24 hours
-and still has outcome = null, reconstructs the price window from the warm
-tier and fills in the outcome fields.
+Runs every hour. Evaluates pending buy signals using two triggers:
+
+  1. Sell signal match — if a sell signal was emitted for the same pair after
+     this buy signal, outcome = sell_price / buy_price - 1.
+
+  2. Timeout — if the buy signal is older than TIMEOUT_DAYS with no matching
+     sell signal, outcome = current_price / buy_price - 1 (using latest warm candle).
+
+Sell signals are not evaluated; they serve only as triggers for buy signal evaluation.
 """
 
 from __future__ import annotations
@@ -18,97 +24,137 @@ from src.agent.models import AppConfig
 
 logger = logging.getLogger(__name__)
 
-_EVALUATION_WINDOW = timedelta(hours=24)
+_TIMEOUT = timedelta(days=20)
 
 
 def evaluate_pending_signals(config: AppConfig) -> None:
-    """Fill in outcomes for signals emitted more than 24 hours ago."""
     ledger = Path(config.data_dir) / "signals.ndjson"
     if not ledger.exists():
         return
 
     now = datetime.now(timezone.utc)
-    cutoff = now - _EVALUATION_WINDOW
+    raw_records = _load_ledger(ledger)
+
+    sell_index = _build_sell_index(raw_records)
 
     lines: list[str] = []
     updated = False
 
-    with ledger.open("r", encoding="utf-8") as fh:
-        for lineno, raw_line in enumerate(fh, 1):
-            line = raw_line.rstrip("\n")
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("Skipping malformed ledger line %d", lineno)
-                lines.append(line)
-                continue
+    for record, original_line in raw_records:
+        if record is None:
+            lines.append(original_line)
+            continue
 
-            if record.get("outcome") is not None:
-                lines.append(line)
-                continue
+        if record.get("outcome") is not None:
+            lines.append(original_line)
+            continue
 
-            emitted_at = _parse_dt(record.get("emitted_at", ""))
-            if emitted_at is None or emitted_at > cutoff:
-                lines.append(line)
-                continue
+        if record.get("direction", "buy") != "buy":
+            lines.append(original_line)
+            continue
 
-            pair = record.get("pair", "")
-            price_at_signal = record.get("price_at_signal")
-            if not pair or price_at_signal is None:
-                lines.append(line)
-                continue
+        pair = record.get("pair", "")
+        price_at_signal = record.get("price_at_signal")
+        emitted_at = _parse_dt(record.get("emitted_at", ""))
 
-            outcome = _compute_outcome(pair, emitted_at, float(price_at_signal), now, config)
-            if outcome is None:
-                lines.append(line)
-                continue
+        if not pair or price_at_signal is None or emitted_at is None:
+            lines.append(original_line)
+            continue
 
-            record["outcome"] = outcome
-            lines.append(json.dumps(record))
-            updated = True
-            logger.info(
-                "Evaluated signal %s (%s %s): gain_24h=%.2f%%",
-                record.get("signal_id", "?"),
-                record.get("rule_id", "?"),
-                pair,
-                outcome["gain_24h_pct"],
-            )
+        outcome = _resolve_outcome(
+            pair, emitted_at, float(price_at_signal), now, sell_index, config
+        )
+        if outcome is None:
+            lines.append(original_line)
+            continue
+
+        record["outcome"] = outcome
+        lines.append(json.dumps(record))
+        updated = True
+        logger.info(
+            "Evaluated signal %s (%s %s): gain=%.2f%% via %s",
+            record.get("signal_id", "?"),
+            record.get("rule_id", "?"),
+            pair,
+            outcome["gain_pct"] * 100,
+            outcome["exit_reason"],
+        )
 
     if updated:
         _rewrite_ledger(ledger, lines)
 
 
-def _compute_outcome(
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _load_ledger(path: Path) -> list[tuple[dict | None, str]]:
+    result: list[tuple[dict | None, str]] = []
+    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            result.append((json.loads(line), line))
+        except json.JSONDecodeError:
+            logger.warning("Skipping malformed ledger line %d", lineno)
+            result.append((None, line))
+    return result
+
+
+def _build_sell_index(
+    raw_records: list[tuple[dict | None, str]],
+) -> dict[str, list[tuple[datetime, float]]]:
+    """Map pair → list of (emitted_at, price) for all sell signals."""
+    index: dict[str, list[tuple[datetime, float]]] = {}
+    for record, _ in raw_records:
+        if record is None or record.get("direction") != "sell":
+            continue
+        pair = record.get("pair", "")
+        emitted_at = _parse_dt(record.get("emitted_at", ""))
+        price = record.get("price_at_signal")
+        if pair and emitted_at is not None and price is not None:
+            index.setdefault(pair, []).append((emitted_at, float(price)))
+    return index
+
+
+def _resolve_outcome(
     pair: str,
     emitted_at: datetime,
     price_at_signal: float,
     now: datetime,
+    sell_index: dict[str, list[tuple[datetime, float]]],
     config: AppConfig,
 ) -> dict | None:
-    window_end = emitted_at + _EVALUATION_WINDOW
+    sells_after = [
+        (dt, p) for dt, p in sell_index.get(pair, []) if dt > emitted_at
+    ]
+    if sells_after:
+        _, exit_price = min(sells_after, key=lambda x: x[0])
+        return {
+            "evaluated_at": now.isoformat(),
+            "exit_price": exit_price,
+            "exit_reason": "sell_signal",
+            "gain_pct": exit_price / price_at_signal - 1,
+        }
+
+    if now - emitted_at >= _TIMEOUT:
+        exit_price = _latest_price(pair, config)
+        if exit_price is None:
+            logger.warning("No price data for %s — cannot evaluate timed-out signal", pair)
+            return None
+        return {
+            "evaluated_at": now.isoformat(),
+            "exit_price": exit_price,
+            "exit_reason": "timeout",
+            "gain_pct": exit_price / price_at_signal - 1,
+        }
+
+    return None
+
+
+def _latest_price(pair: str, config: AppConfig) -> float | None:
     warm = storage.read_warm_candles(pair, config)
-    in_window = [c for c in warm if emitted_at <= c.hour <= window_end]
-
-    if not in_window:
-        logger.warning(
-            "No warm candles for %s in window %s to %s — cannot evaluate yet",
-            pair,
-            emitted_at.isoformat(),
-            window_end.isoformat(),
-        )
-        return None
-
-    closest = min(in_window, key=lambda c: abs((c.hour - window_end).total_seconds()))
-    price_24h = closest.close
-    max_price_24h = max(c.high for c in in_window)
-
-    return {
-        "evaluated_at": now.isoformat(),
-        "price_24h": price_24h,
-        "max_price_24h": max_price_24h,
-        "gain_24h_pct": (price_24h - price_at_signal) / price_at_signal * 100,
-        "max_gain_24h_pct": (max_price_24h - price_at_signal) / price_at_signal * 100,
-    }
+    return warm[-1].close if warm else None
 
 
 def _parse_dt(value: str) -> datetime | None:

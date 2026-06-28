@@ -1,9 +1,10 @@
 """Rule 04 — Time series: ARIMA(1,1,0) price forecast.
 
 Fits AR(1) on first-differenced hourly close prices from the warm tier
-(equivalent to ARIMA(1,1,0)) via OLS. Emits a buy signal when the 3-hour-ahead
-forecast price is more than SIGNAL_THRESHOLD standard errors above the current
-live price.
+(equivalent to ARIMA(1,1,0)) via OLS.
+
+Buy signal:  3-hour-ahead forecast > current price by > SIGNAL_THRESHOLD forecast std devs.
+Sell signal: 3-hour-ahead forecast < current price by > SIGNAL_THRESHOLD forecast std devs.
 
 Forecast variance is computed exactly from the MA(∞) representation of
 ARIMA(1,1,0): Var(e_h) = σ² · Σ_{k=0}^{h-1} ψ_k², where ψ_k = Σ_{j=0}^{k} φ^j.
@@ -14,7 +15,7 @@ from __future__ import annotations
 import math
 import statistics
 
-from src.agent.models import BuySignal, PairData
+from src.agent.models import BuySignal, PairData, SellSignal
 
 RULE_ID = "arima_price_forecast"
 
@@ -87,8 +88,8 @@ def _forecast_std(phi: float, sigma: float, horizon: int) -> float:
     return sigma * math.sqrt(variance)
 
 
-def arima_price_forecast(data: MarketData) -> list[BuySignal]:
-    signals: list[BuySignal] = []
+def arima_price_forecast(data: MarketData) -> list[BuySignal | SellSignal]:
+    signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
         if len(pair_data.warm) < MIN_CANDLES or not pair_data.hot:
@@ -103,15 +104,15 @@ def arima_price_forecast(data: MarketData) -> list[BuySignal]:
         forecast_price = _forecast(prices, phi, intercept, FORECAST_HORIZON)
         current_price = pair_data.hot[-1].last_price
         std = _forecast_std(phi, sigma, FORECAST_HORIZON)
+        ts = pair_data.hot[-1].polled_at
 
-        if std > 0 and (forecast_price - current_price) > SIGNAL_THRESHOLD * std:
-            signals.append(
-                BuySignal(
-                    pair=pair,
-                    rule_id=RULE_ID,
-                    timestamp=pair_data.hot[-1].polled_at,
-                    price=current_price,
-                )
-            )
+        if std <= 0:
+            continue
+
+        deviation = (forecast_price - current_price) / std
+        if deviation > SIGNAL_THRESHOLD:
+            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+        elif deviation < -SIGNAL_THRESHOLD:
+            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
 
     return signals

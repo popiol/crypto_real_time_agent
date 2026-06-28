@@ -17,19 +17,20 @@ import uuid
 from pathlib import Path
 
 from src.agent import collector, evaluator, storage
-from src.agent.models import AppConfig, BuySignal, PairData
-from src.strategy.strategy import find_buy_signals
+from src.agent.models import AppConfig, BuySignal, PairData, SellSignal
+from src.strategy.strategy import find_signals
 from src.updater import pipeline as updater_pipeline
 
 logger = logging.getLogger(__name__)
 
 
-def _append_signals(signals: list[BuySignal], ledger_path: Path) -> None:
+def _append_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     with ledger_path.open("a", encoding="utf-8") as fh:
         for signal in signals:
             record = {
                 "signal_id": str(uuid.uuid4()),
+                "direction": "sell" if isinstance(signal, SellSignal) else "buy",
                 "pair": signal.pair,
                 "rule_id": signal.rule_id,
                 "emitted_at": signal.timestamp.isoformat(),
@@ -97,7 +98,7 @@ def _maybe_run_updater(cycle_start: float, last_run: float, config: AppConfig) -
     return last_run
 
 
-def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal]:
+def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal | SellSignal]:
     try:
         market_data = {
             tick.pair: PairData(
@@ -107,16 +108,16 @@ def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal]:
             )
             for tick in ticks
         }
-        return find_buy_signals(market_data)
+        return list(find_signals(market_data))
     except Exception:
         logger.exception("Strategy execution failed")
         return []
 
 
-def _persist_signals(signals: list[BuySignal], ledger_path: Path) -> None:
+def _persist_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
     if not signals:
         return
-    logger.info("Buy signals: %s", [(s.rule_id, s.pair) for s in signals])
+    logger.info("Signals: %s", [(s.rule_id, s.pair, type(s).__name__) for s in signals])
     try:
         _append_signals(signals, ledger_path)
     except Exception:

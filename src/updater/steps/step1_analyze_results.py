@@ -25,7 +25,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     evaluated = [
         r for r in _read_ledger(ledger)
-        if r.get("outcome") is not None
+        if r.get("outcome") is not None and r.get("direction", "buy") == "buy"
     ]
     if not evaluated:
         logger.info("No evaluated signals yet; skipping step 1")
@@ -34,13 +34,14 @@ def run(config: AppConfig, state_dir: Path) -> None:
     user = (
         "Analyze these buy-signal outcomes from an automated crypto trading system "
         "and return a structured evaluation.\n\n"
+        "Each outcome includes exit_reason ('sell_signal' or 'timeout') and gain_pct.\n\n"
         f"Signal outcomes (JSON):\n{json.dumps(evaluated, indent=2)}"
     )
     result = llm_structured(
         model=config.llm_model,
         system=(
             "You are a trading signal analyst. "
-            "Evaluate the performance of automated buy signals based on 24-hour price outcomes."
+            "Evaluate the performance of automated buy signals based on their exit outcomes."
         ),
         user=user,
         output_type=SignalEvaluation,

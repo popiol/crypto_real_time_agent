@@ -2,8 +2,10 @@
 
 Discretises the warm-tier hourly close prices into N_STATES levels relative
 to the series mean, builds an empirical transition probability matrix from
-the sequential state pairs, then emits a buy signal when the probability of
-moving to a higher state from the current state exceeds SIGNAL_THRESHOLD.
+the sequential state pairs.
+
+Buy signal:  P(move to higher state) > SIGNAL_THRESHOLD.
+Sell signal: P(move to lower state)  > SIGNAL_THRESHOLD.
 
 N_STATES is kept small (3) because the warm tier provides at most 24 data
 points; more states produce a matrix that is too sparse to be reliable.
@@ -19,7 +21,7 @@ from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData
+from src.agent.models import BuySignal, PairData, SellSignal
 
 RULE_ID = "markov_transition"
 
@@ -65,8 +67,8 @@ def _transition_matrix(states: list[int]) -> list[list[float]]:
     return T
 
 
-def markov_chain_transition(data: MarketData) -> list[BuySignal]:
-    signals: list[BuySignal] = []
+def markov_chain_transition(data: MarketData) -> list[BuySignal | SellSignal]:
+    signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
         if len(pair_data.warm) < MIN_WARM_CANDLES or not pair_data.hot:
@@ -77,19 +79,17 @@ def markov_chain_transition(data: MarketData) -> list[BuySignal]:
         T = _transition_matrix(states)
 
         current_state = states[-1]
-        if current_state >= N_STATES - 1:
-            continue  # already at the highest state
+        ts = pair_data.hot[-1].polled_at
+        price = pair_data.hot[-1].last_price
 
-        p_up = sum(T[current_state][j] for j in range(current_state + 1, N_STATES))
+        if current_state < N_STATES - 1:
+            p_up = sum(T[current_state][j] for j in range(current_state + 1, N_STATES))
+            if p_up > SIGNAL_THRESHOLD:
+                signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
 
-        if p_up > SIGNAL_THRESHOLD:
-            signals.append(
-                BuySignal(
-                    pair=pair,
-                    rule_id=RULE_ID,
-                    timestamp=pair_data.hot[-1].polled_at,
-                    price=pair_data.hot[-1].last_price,
-                )
-            )
+        if current_state > 0:
+            p_down = sum(T[current_state][j] for j in range(current_state))
+            if p_down > SIGNAL_THRESHOLD:
+                signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
 
     return signals

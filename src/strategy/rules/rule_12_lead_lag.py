@@ -8,8 +8,10 @@ of their hourly returns at lags k = 1 … MAX_LAG using the warm tier:
 A positive correlation > CORR_THRESHOLD at lag k means A's return today
 predicts B's return k hours from now — A is the leader, B the follower.
 
-Signal condition (for each detected leader-follower pair A → B at lag k):
-    A's cumulative return over the last k warm candles > LEAD_THRESHOLD
+Buy signal:  A's k-hour cumulative return >  LEAD_THRESHOLD → B expected to rise.
+Sell signal: A's k-hour cumulative return < -LEAD_THRESHOLD → B expected to fall.
+
+At most one signal is emitted per target asset per cycle.
 
 Detected pairs are cached until the warm tier changes (once per hour) so the
 O(N²) correlation scan runs at most once per warm refresh, not every second.
@@ -21,7 +23,7 @@ import math
 
 import numpy as np
 
-from src.agent.models import BuySignal, PairData
+from src.agent.models import BuySignal, PairData, SellSignal
 
 RULE_ID = "lead_lag_cross_asset"
 
@@ -108,13 +110,13 @@ def _get_pairs(data: MarketData) -> list[tuple[str, str, int, float]]:
 # ── Signal generation ─────────────────────────────────────────────────────────
 
 
-def lead_lag_cross_asset(data: MarketData) -> list[BuySignal]:
+def lead_lag_cross_asset(data: MarketData) -> list[BuySignal | SellSignal]:
     pairs = _get_pairs(data)
     if not pairs:
         return []
 
-    signals: list[BuySignal] = []
-    seen_targets: set[str] = set()  # emit at most one signal per target asset
+    signals: list[BuySignal | SellSignal] = []
+    seen_targets: set[str] = set()
 
     for a, b, lag, corr in pairs:
         if b in seen_targets:
@@ -127,23 +129,20 @@ def lead_lag_cross_asset(data: MarketData) -> list[BuySignal]:
         if len(pd_a.warm) < lag + 1 or not pd_b.hot:
             continue
 
-        # A's cumulative return over the last `lag` candles
         closes_a = [c.close for c in pd_a.warm]
         denom = closes_a[-lag - 1]
         if denom == 0:
             continue
         a_return = (closes_a[-1] - denom) / denom
 
+        ts = pd_b.hot[-1].polled_at
+        price = pd_b.hot[-1].last_price
+
         if a_return > LEAD_THRESHOLD:
             seen_targets.add(b)
-            signals.append(
-                BuySignal(
-                    pair=b,
-                    rule_id=RULE_ID,
-                    timestamp=pd_b.hot[-1].polled_at,
-                    price=pd_b.hot[-1].last_price,
-                    confidence=corr,
-                )
-            )
+            signals.append(BuySignal(pair=b, rule_id=RULE_ID, timestamp=ts, price=price, confidence=corr))
+        elif a_return < -LEAD_THRESHOLD:
+            seen_targets.add(b)
+            signals.append(SellSignal(pair=b, rule_id=RULE_ID, timestamp=ts, price=price, confidence=corr))
 
     return signals

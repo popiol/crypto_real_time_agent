@@ -1,16 +1,17 @@
 """Rule 11 — Reinforcement learning: Deep Q-Network (DQN).
 
-Action space: A = {0 = hold, 1 = buy}
+Action space: A = {0 = hold, 1 = buy, 2 = sell}
 
-The network approximates Q(s, a) for both actions simultaneously:
-    output shape: (2,)  →  [Q(s, hold), Q(s, buy)]
+The network approximates Q(s, a) for all actions simultaneously:
+    output shape: (3,)  →  [Q(s, hold), Q(s, buy), Q(s, sell)]
 
 Each cycle:
 
   1. Label + train (Bellman update)
      For each pending experience (s, a, r=0, recorded_at) that is ≥ 24 h old:
-       - If a = buy:  r = clip((P_24h − P_0) / P_0, −MAX_R, +MAX_R)
-       - If a = hold: r = 0  (no position taken, no immediate gain)
+       - If a = buy:  r = clip((P_24h − P_0) / P_0 − PROVISION, −MAX_R, +MAX_R)
+       - If a = sell: r = clip((P_0 − P_24h) / P_0 − PROVISION, −MAX_R, +MAX_R)
+       - If a = hold: r = 0
        - Fetch current state s′ from warm-tier data
        - Compute Q_target = Q(s) with only the taken action updated:
              Q_target[a] = r + γ · max_a′ Q(s′)
@@ -24,9 +25,9 @@ Each cycle:
      ε decays from 1.0 → 0.1 over training steps.
 
   3. Infer
-     Emit BuySignal when argmax Q(s) == buy (1) and training has
-     accumulated ≥ MIN_TRAINING_STEPS steps.
-     Confidence = σ(Q(s, buy) − Q(s, hold))  ∈ (0, 1).
+     Emit BuySignal when argmax Q(s) == 1, SellSignal when argmax Q(s) == 2.
+     Inference suppressed until MIN_TRAINING_STEPS accumulated.
+     Confidence = σ(Q(s, chosen) − Q(s, hold))  ∈ (0, 1).
 
 State files:
     data/dqn_model/         TensorFlow SavedModel
@@ -46,7 +47,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.agent.models import BuySignal, PairData, WarmCandle
+from src.agent.models import BuySignal, PairData, SellSignal, WarmCandle
 
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
@@ -57,7 +58,7 @@ RULE_ID = "dqn_buy_signal"
 
 WINDOW_SIZE = 20  # warm candles per state
 N_FEATURES = 2  # (close_norm, roc) per candle
-N_ACTIONS = 2  # 0 = hold, 1 = buy
+N_ACTIONS = 3
 GAMMA = 0.9  # discount factor
 EPS_START = 1.0  # initial exploration rate
 EPS_MIN = 0.1  # minimum exploration rate
@@ -207,11 +208,13 @@ def _label_and_train(
             remaining.append(rec)  # retry next cycle
             continue
 
-        action = rec["action"]  # 0 = hold, 1 = buy
+        action = rec["action"]
 
-        # Immediate reward
         if action == 1:
             raw_r = (current_prices[pair] - rec["price"]) / rec["price"] - PROVISION
+            r = max(-MAX_R, min(MAX_R, raw_r))
+        elif action == 2:
+            raw_r = (rec["price"] - current_prices[pair]) / rec["price"] - PROVISION
             r = max(-MAX_R, min(MAX_R, raw_r))
         else:
             r = 0.0
@@ -282,32 +285,30 @@ def _add_records(pending: list[dict], data: MarketData, now: datetime) -> list[d
 # ── Inference ─────────────────────────────────────────────────────────────────
 
 
-def _infer(data: MarketData) -> list[BuySignal]:
+def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
     if _training_steps < MIN_TRAINING_STEPS:
         return []
 
     import numpy as np
 
-    signals: list[BuySignal] = []
+    signals: list[BuySignal | SellSignal] = []
     for pair, pair_data in data.items():
         s = _current_state(pair_data)
         if s is None or not pair_data.hot:
             continue
 
         X = np.array([s], dtype=np.float32)
-        q = _model(X, training=False).numpy()[0]  # [Q(hold), Q(buy)]
+        q = _model(X, training=False).numpy()[0]  # [Q(hold), Q(buy), Q(sell)]
+        best = int(q.argmax())
 
-        if int(q.argmax()) == 1:  # agent prefers buy
-            confidence = 1.0 / (1.0 + math.exp(-(float(q[1]) - float(q[0]))))
-            signals.append(
-                BuySignal(
-                    pair=pair,
-                    rule_id=RULE_ID,
-                    timestamp=pair_data.hot[-1].polled_at,
-                    price=pair_data.hot[-1].last_price,
-                    confidence=confidence,
-                )
-            )
+        ts = pair_data.hot[-1].polled_at
+        price = pair_data.hot[-1].last_price
+        confidence = 1.0 / (1.0 + math.exp(-(float(q[best]) - float(q[0]))))
+
+        if best == 1:
+            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price, confidence=confidence))
+        elif best == 2:
+            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price, confidence=confidence))
 
     return signals
 
@@ -315,7 +316,7 @@ def _infer(data: MarketData) -> list[BuySignal]:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
-def dqn_buy_signal(data: MarketData) -> list[BuySignal]:
+def dqn_buy_signal(data: MarketData) -> list[BuySignal | SellSignal]:
     if _model is None:
         _load_model_and_state()
 

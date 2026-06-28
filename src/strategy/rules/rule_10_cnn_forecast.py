@@ -11,7 +11,8 @@ Each cycle this rule does three things in order:
                       for a pair, the current warm-tier feature window and live
                       price are appended to data/cnn_pending.ndjson.
 
-  3. Infer          — run the model; emit BuySignal when P(gain) > SIGNAL_THRESHOLD.
+  3. Infer          — run the model; emit BuySignal when P(gain) > SIGNAL_THRESHOLD,
+                      SellSignal when P(gain) < 1 − SIGNAL_THRESHOLD.
                       Inference is suppressed until MIN_TRAINING_STEPS have
                       accumulated so random-weight outputs are never acted on.
 
@@ -35,7 +36,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.agent.models import BuySignal, PairData, WarmCandle
+from src.agent.models import BuySignal, PairData, SellSignal, WarmCandle
 
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
@@ -214,13 +215,13 @@ def _add_records(pending: list[dict], data: MarketData, now: datetime) -> list[d
 
 # ── Infer ─────────────────────────────────────────────────────────────────────
 
-def _infer(data: MarketData) -> list[BuySignal]:
+def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
     if _training_steps < MIN_TRAINING_STEPS:
         return []
 
     import tensorflow as tf
 
-    signals: list[BuySignal] = []
+    signals: list[BuySignal | SellSignal] = []
     for pair, pair_data in data.items():
         if len(pair_data.warm) < WINDOW_SIZE + 1 or not pair_data.hot:
             continue
@@ -229,24 +230,20 @@ def _infer(data: MarketData) -> list[BuySignal]:
         feats = _features(window)[-WINDOW_SIZE:]
         x = tf.constant([feats], dtype=tf.float32)
         prob = float(_model(x, training=False)[0, 0])
+        ts = pair_data.hot[-1].polled_at
+        price = pair_data.hot[-1].last_price
 
         if prob > SIGNAL_THRESHOLD:
-            signals.append(
-                BuySignal(
-                    pair=pair,
-                    rule_id=RULE_ID,
-                    timestamp=pair_data.hot[-1].polled_at,
-                    price=pair_data.hot[-1].last_price,
-                    confidence=prob,
-                )
-            )
+            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price, confidence=prob))
+        elif prob < 1 - SIGNAL_THRESHOLD:
+            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price, confidence=1 - prob))
 
     return signals
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-def cnn_price_forecast(data: MarketData) -> list[BuySignal]:
+def cnn_price_forecast(data: MarketData) -> list[BuySignal | SellSignal]:
     if _model is None:
         _load_model_and_state()
 

@@ -1,12 +1,12 @@
 """Rule 03 — Stochastic process: Ornstein-Uhlenbeck spread mean reversion.
 
 Fits an OU process to the hot-tier spread time series to estimate the
-long-run equilibrium spread (μ) and residual volatility (σ). Emits a buy
-signal when:
-  1. The current spread is significantly above μ (market is unusually wide),
-  2. AND the spread has started compressing (short-term slope is negative).
+long-run equilibrium spread (μ) and residual volatility (σ).
 
-A wide spread that has begun compressing often precedes a sharp price move.
+Buy signal:  spread significantly above μ AND compressing (slope < 0)
+             → market becoming liquid after illiquidity, price move likely.
+Sell signal: spread significantly below μ AND expanding (slope > 0)
+             → liquidity deteriorating, exit condition.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import statistics
 
-from src.agent.models import BuySignal, PairData
+from src.agent.models import BuySignal, PairData, SellSignal
 
 RULE_ID = "ou_spread_compression"
 
@@ -77,8 +77,8 @@ def _slope(series: list[float]) -> float:
     return num / den if den else 0.0
 
 
-def ou_spread_compression(data: MarketData) -> list[BuySignal]:
-    signals: list[BuySignal] = []
+def ou_spread_compression(data: MarketData) -> list[BuySignal | SellSignal]:
+    signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
         ticks = pair_data.hot
@@ -91,23 +91,14 @@ def ou_spread_compression(data: MarketData) -> list[BuySignal]:
         if sigma == 0 or not math.isfinite(mu):
             continue
 
-        # Condition 1: current spread is significantly above OU equilibrium
         current_spread = spreads[-1]
-        if current_spread <= mu + THRESHOLD * sigma:
-            continue
+        recent_slope = _slope(spreads[-SLOPE_WINDOW:])
+        ts = ticks[-1].polled_at
+        price = ticks[-1].last_price
 
-        # Condition 2: spread derivative is negative (compression has begun)
-        recent = spreads[-SLOPE_WINDOW:]
-        if _slope(recent) >= 0:
-            continue
-
-        signals.append(
-            BuySignal(
-                pair=pair,
-                rule_id=RULE_ID,
-                timestamp=ticks[-1].polled_at,
-                price=ticks[-1].last_price,
-            )
-        )
+        if current_spread > mu + THRESHOLD * sigma and recent_slope < 0:
+            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+        elif current_spread < mu - THRESHOLD * sigma and recent_slope > 0:
+            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
 
     return signals
