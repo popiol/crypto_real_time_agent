@@ -98,6 +98,9 @@ def _maybe_run_updater(cycle_start: float, last_run: float, config: AppConfig) -
     return last_run
 
 
+_MIN_VOLUME_24H_USD = 1_000.0
+
+
 def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal | SellSignal]:
     try:
         market_data = {
@@ -108,7 +111,12 @@ def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal | SellSignal
             )
             for tick in ticks
         }
-        return list(find_signals(market_data))
+        signals = list(find_signals(market_data))
+        volume_usd = {t.pair: t.volume_24h * t.last_price for t in ticks}
+        return [
+            s for s in signals
+            if isinstance(s, SellSignal) or volume_usd.get(s.pair, 0.0) >= _MIN_VOLUME_24H_USD
+        ]
     except Exception:
         logger.exception("Strategy execution failed")
         return []

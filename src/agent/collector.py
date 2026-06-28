@@ -122,6 +122,7 @@ def collect(config: AppConfig) -> list[Tick]:
             ask_price = float(t["a"][0])
             ask_volume = float(t["a"][1])
             last_price = float(t["c"][0])
+            volume_24h = float(t["v"][1])
             mid_price = (bid_price + ask_price) / 2
             spread_abs = ask_price - bid_price
             spread_rel = (spread_abs / mid_price * 100) if mid_price else 0.0
@@ -147,6 +148,7 @@ def collect(config: AppConfig) -> list[Tick]:
                 pair=pair_info.altname,
                 polled_at=polled_at,
                 last_price=last_price,
+                volume_24h=volume_24h,
                 bid_price=bid_price,
                 bid_volume=bid_volume,
                 ask_price=ask_price,

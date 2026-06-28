@@ -31,6 +31,9 @@ class Tick(BaseModel):
     ask_price: float
     ask_volume: float
 
+    # 24-hour rolling volume in base currency (from Kraken Ticker v[1])
+    volume_24h: float = 0.0
+
     # Derived
     mid_price: float
     spread_abs: float  # ask - bid
