@@ -49,9 +49,20 @@ class WarmCandle(BaseModel):
     avg_spread_rel: float = 0.0
 
 
+class ColdMonth(BaseModel):
+    month: str  # "YYYY-MM"
+    min_price: float
+    max_price: float
+    avg_price: float
+    avg_daily_spread: float
+    candle_count: int
+    last_candle_hour: datetime
+
+
 class PairData(BaseModel):
     hot: list[Tick] = []
     warm: list[WarmCandle] = []
+    cold: list[ColdMonth] = []
 
 
 class BuySignal(BaseModel):

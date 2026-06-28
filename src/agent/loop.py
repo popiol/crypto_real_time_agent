@@ -16,9 +16,10 @@ import time
 import uuid
 from pathlib import Path
 
-from src.agent import collector, storage
+from src.agent import collector, evaluator, storage
 from src.agent.models import AppConfig, BuySignal, PairData
 from src.strategy.strategy import find_buy_signals
+from src.updater import pipeline as updater_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -40,16 +41,86 @@ def _append_signals(signals: list[BuySignal], ledger_path: Path) -> None:
 
 
 _WARM_REFRESH_INTERVAL_S = 3600.0
+_UPDATER_INTERVAL_S = 86400.0
 
 
-def _refresh_warm_tier(pairs: set[str], config: AppConfig) -> None:
-    logger.info("Refreshing warm tier for %d pairs", len(pairs))
+def _refresh_tiers(pairs: set[str], config: AppConfig) -> None:
+    logger.info("Refreshing warm and cold tiers for %d pairs", len(pairs))
     for pair in pairs:
         try:
-            candles = collector.fetch_warm_candles(pair, config)
-            storage.write_warm_candles(candles, pair, config)
+            storage.downsample_hot_to_warm(pair, config)
         except Exception:
             logger.exception("Warm refresh failed for %s", pair)
+        try:
+            storage.recompute_cold_tier(pair, config)
+        except Exception:
+            logger.exception("Cold recompute failed for %s", pair)
+    try:
+        evaluator.evaluate_pending_signals(config)
+    except Exception:
+        logger.exception("Signal evaluation failed")
+
+
+def _collect_ticks(config: AppConfig) -> list:
+    try:
+        return collector.collect(config)
+    except Exception:
+        logger.exception("Collection failed")
+        return []
+
+
+def _persist_ticks(ticks: list, config: AppConfig) -> None:
+    if not ticks:
+        return
+    try:
+        storage.write_ticks(ticks, config)
+    except Exception:
+        logger.exception("Storage write failed")
+
+
+def _maybe_refresh_tiers(
+    ticks: list, cycle_start: float, last_refresh: float, config: AppConfig
+) -> float:
+    if ticks and cycle_start - last_refresh >= _WARM_REFRESH_INTERVAL_S:
+        _refresh_tiers({t.pair for t in ticks}, config)
+        return cycle_start
+    return last_refresh
+
+
+def _maybe_run_updater(cycle_start: float, last_run: float, config: AppConfig) -> float:
+    if cycle_start - last_run >= _UPDATER_INTERVAL_S:
+        try:
+            updater_pipeline.run(config)
+        except Exception:
+            logger.exception("Strategy Updater pipeline failed")
+        return cycle_start
+    return last_run
+
+
+def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal]:
+    try:
+        market_data = {
+            tick.pair: PairData(
+                hot=storage.read_ticks(tick.pair, config),
+                warm=storage.read_warm_candles(tick.pair, config),
+                cold=storage.read_cold_months(tick.pair, config),
+            )
+            for tick in ticks
+        }
+        return find_buy_signals(market_data)
+    except Exception:
+        logger.exception("Strategy execution failed")
+        return []
+
+
+def _persist_signals(signals: list[BuySignal], ledger_path: Path) -> None:
+    if not signals:
+        return
+    logger.info("Buy signals: %s", [(s.rule_id, s.pair) for s in signals])
+    try:
+        _append_signals(signals, ledger_path)
+    except Exception:
+        logger.exception("Failed to write signals")
 
 
 def run(config: AppConfig) -> None:
@@ -58,52 +129,17 @@ def run(config: AppConfig) -> None:
     logger.info("Starting polling loop. Pairs: %s", config.pairs or "auto-discover all USD pairs")
 
     last_warm_refresh = 0.0
+    last_updater_run = 0.0
 
     while True:
         cycle_start = time.monotonic()
 
-        # --- 1. Collect ---
-        try:
-            ticks = collector.collect(config)
-        except Exception:
-            logger.exception("Collection failed")
-            ticks = []
+        ticks = _collect_ticks(config)
+        _persist_ticks(ticks, config)
+        last_warm_refresh = _maybe_refresh_tiers(ticks, cycle_start, last_warm_refresh, config)
+        last_updater_run = _maybe_run_updater(cycle_start, last_updater_run, config)
+        _persist_signals(_run_strategy(ticks, config), ledger_path)
 
-        # --- 2. Persist to hot tier ---
-        if ticks:
-            try:
-                storage.write_ticks(ticks, config)
-            except Exception:
-                logger.exception("Storage write failed")
-
-        # --- 2b. Refresh warm tier (hourly) ---
-        if ticks and cycle_start - last_warm_refresh >= _WARM_REFRESH_INTERVAL_S:
-            _refresh_warm_tier({t.pair for t in ticks}, config)
-            last_warm_refresh = cycle_start
-
-        # --- 3. Run strategy ---
-        try:
-            market_data = {
-                tick.pair: PairData(
-                    hot=storage.read_ticks(tick.pair, config),
-                    warm=storage.read_warm_candles(tick.pair, config),
-                )
-                for tick in ticks
-            }
-            signals: list[BuySignal] = find_buy_signals(market_data)
-        except Exception:
-            logger.exception("Strategy execution failed")
-            signals = []
-
-        # --- 4. Persist signals ---
-        if signals:
-            logger.info("Buy signals: %s", [(s.rule_id, s.pair) for s in signals])
-            try:
-                _append_signals(signals, ledger_path)
-            except Exception:
-                logger.exception("Failed to write signals")
-
-        # --- 5. Sleep for the remainder of min_poll_interval ---
         elapsed = time.monotonic() - cycle_start
         sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)
         if sleep_for:

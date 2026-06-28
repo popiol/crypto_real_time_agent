@@ -125,18 +125,31 @@ def find_buy_signals(data: MarketData) -> list[BuySignal]:
 
 ### 5.2 Rules
 
-Each rule is a self-contained function within `strategy.py` with the signature:
+Each rule version is a self-contained Python file under `strategy/rules/<rule_name>/`. Each file exposes a single function:
 
 ```python
-def rule_<id>(data: MarketData) -> list[BuySignal]:
+def rule(data: MarketData) -> list[BuySignal]:
     ...
 ```
 
-`find_buy_signals` calls all registered rules and merges their outputs. Rules are purely functional — they read data and return signals; they have no side effects.
+`strategy.py` imports the registered version files and calls their `rule` functions, merging all outputs. Rules are purely functional — they read data and return signals; they have no side effects.
+
+Directory layout:
+
+```
+strategy/
+  rules/
+    rule_01_spread_compression/
+      v1.py
+      v2.py
+    rule_02_momentum_reversal/
+      v1.py
+  strategy.py
+```
 
 ### 5.3 Rule versioning
 
-Each rule has a unique string `rule_id` (e.g., `spread_compression_v1`). When a rule is revised rather than replaced, a new `_v2` variant is added and the old one is deprecated (kept in the file but not registered) to preserve traceability of historical signals.
+Each active rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When a rule is revised, a new version file (`v2.py`, `v3.py`, …) is added to the rule's folder and registered in `strategy.py`. The old version file is kept for signal traceability but is unregistered once it is dropped or superseded. Multiple versions of the same rule can be active simultaneously while their relative performance is being assessed.
 
 ---
 
@@ -195,7 +208,9 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | File | Contents |
 |---|---|
 | `data/state/signal_evaluation.json` | Aggregated interpretation of recent signal outcomes |
-| `data/state/rule_evaluation.json` | Per-rule scoring and status based on signal history |
+| `data/state/rule_descriptions.json` | Cached plain-language descriptions of each rule version; generated once per version, reused across runs |
+| `data/state/rule_evaluation.json` | Per-rule-version scoring, status, and description based on signal history |
+| `data/state/version_comparison.json` | Results of comparing versions of the same rule; marks inferior versions for dropping |
 | `data/state/conclusions.json` | Strategic conclusions derived from the latest rule evaluation |
 | `data/state/long_term_plan.json` | Evolving high-level direction for the strategy |
 | `data/state/idea_backlog.json` | Pool of rule ideas with status (`proposed`, `evaluated`, `implemented`, `rejected`) |
@@ -211,55 +226,78 @@ All steps that involve reasoning use the LLM (see section 9). Steps run sequenti
 Aggregates the signal outcome data into a structured summary: overall win rate, average and max gains by pair, by time of day, by market conditions at signal time. Identifies patterns in which signals performed well or poorly.
 
 #### Step 2 — Analyze current rules
-*Inputs*: `signal_evaluation.json`, current rule definitions in `strategy.py`  
-*Output*: `rule_evaluation.json`
+*Inputs*: `signal_evaluation.json`, `rule_descriptions.json`, registered rule versions from `strategy/rules/`  
+*Output*: `rule_descriptions.json` (updated), `rule_evaluation.json`
 
-For each active and candidate rule: computes signal count, average gain, max gain, positive rate, and a composite score. Determines whether each rule has enough data to be scored. Flags rules that fall below the deprecation threshold.
+Processes each registered rule version independently in two sub-steps:
 
-#### Step 3 — Derive conclusions
-*Inputs*: `rule_evaluation.json`, current rule definitions in `strategy.py`  
+1. **Describe** — for each version not already present in `rule_descriptions.json`, makes one LLM call to produce a concise plain-language description of what the rule does and the signal it looks for. Newly generated descriptions are written to `rule_descriptions.json` immediately; existing descriptions are reused as-is.
+
+2. **Score** — for each version: computes signal count, average gain, max gain, positive rate, and a composite score from the signal ledger data in `signal_evaluation.json`. Determines whether the version has enough data to be scored. Flags versions that fall below the deprecation threshold.
+
+The final `rule_evaluation.json` contains both the description and the scoring for every version.
+
+#### Step 3 — Compare rule versions
+*Inputs*: `rule_evaluation.json`, registered rule versions from `strategy/rules/`  
+*Output*: `version_comparison.json`
+
+For each rule that has more than one registered version, compares composite scores from `rule_evaluation.json`. If a version's score is significantly worse than the best-performing version of the same rule, it is marked for dropping. Versions still in candidate status (insufficient signal data) are excluded from comparison — they are not dropped until they have been scored. The output also captures the rationale for each drop decision. Versions marked for dropping are unregistered in step 8.
+
+#### Step 4 — Derive conclusions
+*Inputs*: `rule_evaluation.json`, `version_comparison.json`, registered rule versions from `strategy/rules/`  
 *Output*: `conclusions.json`
 
 Interprets the rule evaluation holistically: what kinds of signals tend to work, what market conditions correlate with good outcomes, what structural weaknesses exist in the current rule set.
 
-#### Step 4 — Update long term plan
+#### Step 5 — Update long term plan
 *Inputs*: `conclusions.json`, existing `long_term_plan.json`  
 *Output*: `long_term_plan.json` (updated)
 
 Revises the strategic direction for the agent based on the latest conclusions. The plan is a persistent document that accumulates knowledge across many update cycles.
 
-#### Step 5 — Generate ideas
-*Inputs*: `long_term_plan.json`, `idea_backlog.json`  
+#### Step 6 — Generate ideas
+*Inputs*: `long_term_plan.json`, `idea_backlog.json`, registered rule versions from `strategy/rules/`  
 *Output*: `idea_backlog.json` (new entries appended)
 
-Ensures the backlog has sufficient open ideas (status `proposed` or `evaluated`). Each LLM call generates exactly one idea (description, rationale, pseudocode) and is repeated until one of the following stop conditions is met:
+There are two kinds of ideas:
+- **New rule** — proposes an entirely new rule concept. If implemented, a new rule folder and `v1.py` are created.
+- **Modify rule** — proposes a revision to an existing rule. If implemented, a new version file (`v2.py`, `v3.py`, …) is added to that rule's folder.
+
+Ensures the backlog has sufficient open ideas (status `proposed` or `evaluated`). Each LLM call generates exactly one idea and is repeated until one of the following stop conditions is met:
 - There are at least 3 open ideas **and** the highest-scored open idea has a score ≥ 0.6.
 - 3 new ideas have been generated in this cycle (cap per run).
 
 If both conditions are already satisfied at the start of the step, it is skipped entirely. New ideas are added with status `proposed`.
 
-#### Step 6 — Evaluate ideas
+#### Step 7 — Evaluate ideas
 *Inputs*: `long_term_plan.json`, `idea_backlog.json`  
 *Output*: `idea_backlog.json` (scores and status updated)
 
 In a single LLM call, scores **all** ideas in the backlog — both newly `proposed` and previously `evaluated` — against the long term plan, estimated feasibility, and potential signal quality. Re-evaluating existing ideas allows scores to be revised in light of updated conclusions and plan. Sets a score (0–1) for each idea, marks low-potential ones as `rejected`, and marks the rest as `evaluated`.
 
-#### Step 7 — Select and implement one idea
-*Inputs*: `idea_backlog.json`, current `strategy.py`  
-*Output*: `strategy.py` (new rule appended and registered), `idea_backlog.json` (idea marked `implemented`)
+#### Step 8 — Select and implement one idea
+*Inputs*: `idea_backlog.json`, `version_comparison.json`, registered rule versions from `strategy/rules/`  
+*Output*: new or updated rule version file under `strategy/rules/`, `strategy.py` (registrations updated), `idea_backlog.json` (idea marked `implemented`)
 
-Selects the highest-scored ready idea, generates the complete rule function code, appends it to `strategy.py`, and registers it in the active rule list. At most one rule is added per pipeline run to keep changes reviewable. Rules deprecated in step 2 are simultaneously unregistered (function kept in file for traceability, removed from the registry).
+Selects the highest-scored ready idea and generates the rule code:
+- For a **new rule** idea: creates a new rule folder and `v1.py`, registers it in `strategy.py`.
+- For a **modify rule** idea: creates the next version file in the existing rule's folder, registers it in `strategy.py` alongside the prior version.
+
+At most one rule version is added per pipeline run to keep changes reviewable. Simultaneously, rule versions deprecated in step 2 and inferior versions marked for dropping in step 3 are unregistered from `strategy.py` (files are kept for signal traceability).
 
 ### 8.3 Rule lifecycle
 
 ```
-[proposed in backlog] → [implemented / candidate] → [active] → [deprecated]
+[proposed in backlog] → [implemented / candidate] → [active] → [dropped]
+                                                                   ▲
+                                                       (version comparison
+                                                        marks inferior versions)
 ```
 
-- **Proposed**: idea exists in the backlog, not yet in `strategy.py`.
-- **Candidate**: rule added to `strategy.py` but below the minimum signal threshold to be scored.
-- **Active**: rule has enough signal history and score is above the deprecation threshold.
-- **Deprecated**: score fell below threshold; unregistered from `find_buy_signals` but kept in the file.
+- **Proposed**: idea exists in the backlog, not yet in `strategy/rules/`.
+- **Candidate**: version file exists and is registered in `strategy.py`, but below the minimum signal threshold to be scored. Not eligible for version comparison.
+- **Active**: version has enough signal history and composite score is above the deprecation threshold.
+- **Dropped**: either score fell below the deprecation threshold, or version comparison identified it as significantly worse than another version of the same rule. Unregistered from `strategy.py` but the version file is kept for signal traceability.
 
 ---
 
@@ -269,7 +307,7 @@ All model calls across the Strategy Updater pipeline are made through **LangChai
 
 ### 9.1 Model
 
-Default model: `gemini-2.0-flash` (via `langchain-google-genai`). The model name is read from `config.yaml` and passed to the LangChain chat model constructor at startup.
+The model name is read from `config.yaml` and passed to the LangChain chat model constructor at startup.
 
 ### 9.2 Structured output
 
@@ -282,8 +320,16 @@ class SignalEvaluation(BaseModel):
     avg_max_gain_24h: float
     notes: str
 
-class RuleScore(BaseModel):
+class RuleDescription(BaseModel):
     rule_id: str
+    description: str
+
+class RuleDescriptions(BaseModel):
+    rules: list[RuleDescription]
+
+class RuleScore(BaseModel):
+    rule_id: str          # includes version, e.g. "rule_01_spread_compression_v2"
+    description: str      # carried over from rule_descriptions.json
     signal_count: int
     avg_gain_24h: float
     positive_rate: float
@@ -304,12 +350,25 @@ class LongTermPlan(BaseModel):
     priorities: list[str]
     updated_at: str
 
+class RuleVersionComparison(BaseModel):
+    rule_name: str
+    versions_compared: list[str]
+    best_version: str
+    versions_to_drop: list[str]
+    rationale: str
+
+class VersionComparisonResult(BaseModel):
+    comparisons: list[RuleVersionComparison]
+    summary: str
+
 class RuleIdea(BaseModel):
     idea_id: str
     title: str
     description: str
     rationale: str
     pseudocode: str
+    kind: Literal["new_rule", "modify_rule"]
+    target_rule: str | None  # rule_name of the rule to modify; None for new_rule ideas
     score: float | None
     status: Literal["proposed", "evaluated", "implemented", "rejected"]
 
@@ -334,7 +393,7 @@ The main process runs a cooperative loop with the following periodic tasks:
 | Downsample hot → warm tier | Every hour |
 | Recompute cold-tier statistics | Every hour (after warm downsampling) |
 | Evaluate pending signal outcomes | Every hour |
-| Run Strategy Updater pipeline (all 7 steps) | Every 24 hours |
+| Run Strategy Updater pipeline (all 8 steps) | Every 24 hours |
 
 ---
 
@@ -342,13 +401,12 @@ The main process runs a cooperative loop with the following periodic tasks:
 
 A single `config.yaml` at the project root controls:
 
-- Tracked pairs (e.g., `["XBTUSD", "ETHUSD"]`)
 - Poll interval and backoff parameters
 - Hot-tier max tick retention count
 - Rule deprecation threshold and minimum signal count for scoring
 - Data directory path
 - State directory path (default: `data/state/`)
-- LLM model name (default: `gemini-2.0-flash`)
+- LLM model name (e.g.: `gemini-2.0-flash`)
 - Backtesting data directory (default: `../crypto_alerts_llm/data/raw`)
 
 ---

@@ -25,19 +25,20 @@ from src.agent.models import BuySignal, PairData
 
 RULE_ID = "lead_lag_cross_asset"
 
-MIN_CANDLES = 20        # minimum warm candles per asset for reliable correlation
-MAX_LAG = 3             # maximum lead time in hours to consider
-CORR_THRESHOLD = 0.5    # minimum Pearson r to treat a lag as a real relationship
-LEAD_THRESHOLD = 0.0    # A's k-hour cumulative return must exceed this to signal
+MIN_CANDLES = 20  # minimum warm candles per asset for reliable correlation
+MAX_LAG = 3  # maximum lead time in hours to consider
+CORR_THRESHOLD = 0.5  # minimum Pearson r to treat a lag as a real relationship
+LEAD_THRESHOLD = 0.01  # A's k-hour cumulative return must exceed this to signal
 
 MarketData = dict[str, PairData]
 
 # ── Pair cache (refreshed when warm tier changes, i.e. ~hourly) ───────────────
-_cached_pairs: list[tuple[str, str, int, float]] = []   # (A, B, lag, corr)
+_cached_pairs: list[tuple[str, str, int, float]] = []  # (A, B, lag, corr)
 _cache_key: str = ""
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _returns(closes: list[float]) -> np.ndarray:
     arr = np.array(closes, dtype=np.float64)
@@ -58,6 +59,7 @@ def _best_lag_corr(r_a: np.ndarray, r_b: np.ndarray) -> tuple[int, float]:
 
 
 # ── Pair detection (cached) ───────────────────────────────────────────────────
+
 
 def _detect_pairs(
     asset_returns: dict[str, np.ndarray],
@@ -97,6 +99,7 @@ def _get_pairs(data: MarketData) -> list[tuple[str, str, int, float]]:
     if _cached_pairs:
         logger_pairs = [(a, b, k, round(c, 2)) for a, b, k, c in _cached_pairs]
         import logging
+
         logging.getLogger(__name__).debug("Lead-lag pairs detected: %s", logger_pairs)
 
     return _cached_pairs
@@ -104,13 +107,14 @@ def _get_pairs(data: MarketData) -> list[tuple[str, str, int, float]]:
 
 # ── Signal generation ─────────────────────────────────────────────────────────
 
+
 def lead_lag_cross_asset(data: MarketData) -> list[BuySignal]:
     pairs = _get_pairs(data)
     if not pairs:
         return []
 
     signals: list[BuySignal] = []
-    seen_targets: set[str] = set()     # emit at most one signal per target asset
+    seen_targets: set[str] = set()  # emit at most one signal per target asset
 
     for a, b, lag, corr in pairs:
         if b in seen_targets:
