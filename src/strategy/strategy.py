@@ -18,6 +18,12 @@ from src.strategy.rules.rule_03_ou_spread import ou_spread_compression
 from src.strategy.rules.rule_04_arima_forecast import arima_price_forecast
 from src.strategy.rules.rule_05_fft_cycle import fft_cycle_trough
 from src.strategy.rules.rule_06_kalman_velocity import kalman_velocity_reversal
+from src.strategy.rules.rule_07_order_book_imbalance import order_book_imbalance
+from src.strategy.rules.rule_08_roc_momentum import rate_of_change_momentum
+from src.strategy.rules.rule_09_markov_chain import markov_chain_transition
+from src.strategy.rules.rule_10_cnn_forecast import cnn_price_forecast
+from src.strategy.rules.rule_11_dqn_agent import dqn_buy_signal
+from src.strategy.rules.rule_12_lead_lag import lead_lag_cross_asset
 
 # ---------------------------------------------------------------------------
 # Type alias for the data passed to each rule
@@ -38,6 +44,12 @@ ACTIVE_RULES = [
     arima_price_forecast,
     fft_cycle_trough,
     kalman_velocity_reversal,
+    order_book_imbalance,
+    rate_of_change_momentum,
+    markov_chain_transition,
+    cnn_price_forecast,
+    dqn_buy_signal,
+    lead_lag_cross_asset,
 ]
 
 

@@ -111,3 +111,13 @@ Seed ideas for the first version of `strategy.py`. Each idea is described at the
 **Data needed**: backtesting dataset for training; live tiers for inference.  
 **Pros**: directly optimises for profit rather than a proxy metric; adapts to market dynamics through retraining.  
 **Cons**: most complex to implement and retrain; reward signal sparsity (only one outcome per 24h window) makes training slow.
+
+---
+
+## 12. Cross-asset — lead-lag relationship detection
+
+**Approach**: cross-correlation of hourly returns across all tracked asset pairs.  
+**Idea**: for every ordered pair of assets (A, B), compute the Pearson cross-correlation of their warm-tier hourly returns at lags k = 1, 2, 3 hours: corr(r_A[t], r_B[t+k]). A high positive correlation at lag k means A is a leading indicator for B — A's movement today predicts B's movement k hours from now. Emit a buy signal for B when A has recently moved up and the lead-lag relationship is strong.  
+**Data needed**: warm tier (hourly close prices for all pairs).  
+**Pros**: exploits structural dependencies between assets that single-asset rules cannot see; low latency once pairs are detected.  
+**Cons**: correlation is not causation; lead-lag relationships in crypto are unstable and may disappear or reverse. With only 24 warm candles the correlation estimate is noisy. Detected pairs are cached and refreshed hourly to avoid O(N²) cost every cycle.
