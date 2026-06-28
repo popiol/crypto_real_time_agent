@@ -62,9 +62,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     # Preserve implemented/rejected status from existing backlog; only update scoreable ones
     scored_by_id = {i.idea_id: i for i in result.ideas}
     for idea in backlog.ideas:
-        if idea.status in ("implemented",):
-            scored_by_id[idea.idea_id] = idea
-        elif idea.idea_id not in scored_by_id:
+        if idea.status == "implemented" or idea.idea_id not in scored_by_id:
             scored_by_id[idea.idea_id] = idea
 
     final_backlog = IdeaBacklog(ideas=list(scored_by_id.values()))

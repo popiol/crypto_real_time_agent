@@ -90,7 +90,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     try:
         implemented = _generate_code(idea, rule_id, config.llm_model)
     except Exception:
-        logger.error("Code generation failed for idea %s", idea.idea_id, exc_info=True)
+        logger.exception("Code generation failed for idea %s", idea.idea_id)
         return
 
     # 5. Write rule file
@@ -102,9 +102,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     try:
         _register_rule(_STRATEGY_FILE, implemented.rule_id, implemented.function_name)
     except Exception:
-        logger.error(
-            "Failed to register %s in strategy.py", implemented.rule_id, exc_info=True
-        )
+        logger.exception("Failed to register %s in strategy.py", implemented.rule_id)
         rule_path.unlink(missing_ok=True)
         return
 
@@ -141,7 +139,8 @@ def _next_rule_path(idea: RuleIdea) -> tuple[str, Path]:
         base = idea.target_rule
         existing = sorted(_RULES_DIR.glob(f"{base}_v*.py"))
         if existing:
-            last_ver = int(re.search(r"_v(\d+)\.py$", existing[-1].name).group(1))
+            ver_match = re.search(r"_v(\d+)\.py$", existing[-1].name)
+            last_ver = int(ver_match.group(1)) if ver_match else 1
             next_ver = last_ver + 1
         else:
             # First version is the base file; next is v2
