@@ -9,6 +9,7 @@ invocation, a PID file is checked to ensure only one instance runs at a time:
 
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import sys
@@ -72,8 +73,14 @@ def _release_pid_lock(pid_file: Path) -> None:
 
 
 if __name__ == "__main__":
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
-    config = load_config(config_path)
+    parser = argparse.ArgumentParser(description="Crypto real-time trading agent")
+    parser.add_argument("config", nargs="?", default="config.yaml", help="Path to config YAML")
+    parser.add_argument("--test", action="store_true", help="Run in test mode using historical data")
+    args = parser.parse_args()
+
+    config = load_config(args.config)
+    if args.test:
+        config = config.model_copy(update={"test_mode": True})
 
     pid_file = Path(config.data_dir) / "agent.pid"
 
