@@ -15,6 +15,7 @@ import yaml
 from src.agent import backtest_collector, storage
 from src.agent.loop import persist_signals, run_strategy
 from src.agent.models import AppConfig
+from src.analyze import run as analyze_run
 from src.process import run as process_run
 
 logging.basicConfig(
@@ -32,10 +33,14 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     return AppConfig.model_validate(raw)
 
 
+_ANALYZE_INTERVAL_CYCLES = 24  # one snapshot per hour → analyze once per day
+
+
 def run(config: AppConfig) -> None:
     ledger_path = Path(config.data_dir) / "signals.ndjson"
     logger.info("Starting test run from %s", config.backtest_data_dir)
 
+    cycle = 0
     while True:
         ticks = backtest_collector.next_snapshot(config)
         if ticks is None:
@@ -51,6 +56,10 @@ def run(config: AppConfig) -> None:
 
         persist_signals(run_strategy(ticks, config), ledger_path)
         process_run(config)
+
+        cycle += 1
+        if cycle % _ANALYZE_INTERVAL_CYCLES == 0:
+            analyze_run(config)
 
 
 if __name__ == "__main__":
