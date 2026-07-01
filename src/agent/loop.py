@@ -1,11 +1,10 @@
-"""Main polling loop.
+"""Real-time polling loop.
 
 Runs continuously:
-  1. Collect ticks from Kraken (Ticker + Depth).
+  1. Collect ticks from Kraken.
   2. Persist ticks to the hot tier.
-  3. Run find_buy_signals() from the strategy module.
-  4. Persist any buy signals to the signal ledger.
-  5. Wait until min_poll_interval has elapsed since the cycle started, then repeat.
+  3. Run strategy rules and emit signals to the signal ledger.
+  4. Sleep until min_poll_interval has elapsed, then repeat.
 """
 
 from __future__ import annotations
@@ -16,12 +15,13 @@ import time
 import uuid
 from pathlib import Path
 
-from src.agent import backtest_collector, collector, evaluator, storage
+from src.agent import collector, storage
 from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
 from src.strategy.strategy import find_signals
-from src.updater import pipeline as updater_pipeline
 
 logger = logging.getLogger(__name__)
+
+_MIN_VOLUME_24H_USD = 1_000.0
 
 
 def _append_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
@@ -41,76 +41,7 @@ def _append_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) ->
             fh.write(json.dumps(record) + "\n")
 
 
-_WARM_REFRESH_INTERVAL_S = 3600.0
-_UPDATER_INTERVAL_S = 86400.0
-
-
-def _refresh_tiers(pairs: set[str], config: AppConfig) -> None:
-    logger.info("Refreshing warm and cold tiers for %d pairs", len(pairs))
-    for pair in pairs:
-        try:
-            storage.downsample_hot_to_warm(pair, config)
-        except Exception:
-            logger.exception("Warm refresh failed for %s", pair)
-        try:
-            storage.recompute_cold_tier(pair, config)
-        except Exception:
-            logger.exception("Cold recompute failed for %s", pair)
-    try:
-        evaluator.evaluate_pending_signals(config)
-    except Exception:
-        logger.exception("Signal evaluation failed")
-
-
-def _collect_ticks(config: AppConfig) -> list[Tick] | None:
-    """Return ticks for this cycle, or None to signal exhaustion (test mode only)."""
-    if config.test_mode:
-        return backtest_collector.next_snapshot(config)
-    try:
-        return collector.collect(config)
-    except Exception:
-        logger.exception("Collection failed")
-        return []
-
-
-def _persist_ticks(ticks: list[Tick], config: AppConfig) -> None:
-    if not ticks:
-        return
-    reference_time = ticks[0].polled_at if config.test_mode else None
-    try:
-        storage.write_ticks(ticks, config, reference_time=reference_time)
-    except Exception:
-        logger.exception("Storage write failed")
-
-
-def _maybe_refresh_tiers(
-    ticks: list[Tick], cycle_start: float, last_refresh: float, config: AppConfig
-) -> float:
-    should_refresh = ticks and (
-        config.test_mode or cycle_start - last_refresh >= _WARM_REFRESH_INTERVAL_S
-    )
-    if should_refresh:
-        _refresh_tiers({t.pair for t in ticks}, config)
-        return cycle_start
-    return last_refresh
-
-
-def _maybe_run_updater(cycle_start: float, last_run: float, config: AppConfig) -> float:
-    if config.test_mode:
-        return last_run
-    if cycle_start - last_run >= _UPDATER_INTERVAL_S:
-        try:
-            updater_pipeline.run(config)
-        except Exception:
-            logger.exception("Strategy Updater pipeline failed")
-        return cycle_start
-    return last_run
-
-
-_MIN_VOLUME_24H_USD = 1_000.0
-
-
-def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal | SellSignal]:
+def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellSignal]:
     try:
         market_data = {
             tick.pair: PairData(
@@ -131,7 +62,7 @@ def _run_strategy(ticks: list, config: AppConfig) -> list[BuySignal | SellSignal
         return []
 
 
-def _persist_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
+def persist_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
     if not signals:
         return
     logger.info("Signals: %s", [(s.rule_id, s.pair, type(s).__name__) for s in signals])
@@ -142,28 +73,27 @@ def _persist_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -
 
 
 def run(config: AppConfig) -> None:
-    """Start the polling loop. Runs until interrupted."""
+    """Start the live polling loop. Runs until interrupted."""
     ledger_path = Path(config.data_dir) / "signals.ndjson"
-    logger.info("Starting polling loop. Pairs: %s", config.pairs or "auto-discover all USD pairs")
-
-    last_warm_refresh = 0.0
-    last_updater_run = 0.0
+    logger.info("Starting pull loop. Pairs: %s", config.pairs or "auto-discover all USD pairs")
 
     while True:
         cycle_start = time.monotonic()
 
-        ticks = _collect_ticks(config)
-        if ticks is None:
-            logger.info("Backtest data exhausted — stopping")
-            break
+        try:
+            ticks = collector.collect(config)
+        except Exception:
+            logger.exception("Collection failed")
+            ticks = []
 
-        _persist_ticks(ticks, config)
-        last_warm_refresh = _maybe_refresh_tiers(ticks, cycle_start, last_warm_refresh, config)
-        last_updater_run = _maybe_run_updater(cycle_start, last_updater_run, config)
-        _persist_signals(_run_strategy(ticks, config), ledger_path)
+        try:
+            storage.write_ticks(ticks, config)
+        except Exception:
+            logger.exception("Storage write failed")
 
-        if not config.test_mode:
-            elapsed = time.monotonic() - cycle_start
-            sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)
-            if sleep_for:
-                time.sleep(sleep_for)
+        persist_signals(run_strategy(ticks, config), ledger_path)
+
+        elapsed = time.monotonic() - cycle_start
+        sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)
+        if sleep_for:
+            time.sleep(sleep_for)

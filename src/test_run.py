@@ -1,0 +1,61 @@
+"""Test runner — replays historical snapshots through the full pipeline in a single loop.
+
+Simulates pull + process in sequence for each snapshot, then exits.
+The analyze step (LLM updater) is excluded; run src/analyze.py separately if needed.
+"""
+
+from __future__ import annotations
+
+import argparse
+import logging
+from pathlib import Path
+
+import yaml
+
+from src.agent import backtest_collector, storage
+from src.agent.loop import persist_signals, run_strategy
+from src.agent.models import AppConfig
+from src.process import run as process_run
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
+
+logger = logging.getLogger(__name__)
+
+
+def load_config(path: str = "config.yaml") -> AppConfig:
+    with open(path, "r", encoding="utf-8") as fh:
+        raw = yaml.safe_load(fh)
+    return AppConfig.model_validate(raw)
+
+
+def run(config: AppConfig) -> None:
+    ledger_path = Path(config.data_dir) / "signals.ndjson"
+    logger.info("Starting test run from %s", config.backtest_data_dir)
+
+    while True:
+        ticks = backtest_collector.next_snapshot(config)
+        if ticks is None:
+            logger.info("Backtest data exhausted — done")
+            break
+        if not ticks:
+            continue
+
+        try:
+            storage.write_ticks(ticks, config, reference_time=ticks[0].polled_at)
+        except Exception:
+            logger.exception("Storage write failed")
+
+        persist_signals(run_strategy(ticks, config), ledger_path)
+        process_run(config)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Crypto test runner (historical replay)")
+    parser.add_argument("config", nargs="?", default="config.yaml", help="Path to config YAML")
+    args = parser.parse_args()
+
+    run(load_config(args.config))

@@ -1,10 +1,9 @@
-"""Entry point for the crypto real-time agent.
+"""Real-time pull process — collects Kraken ticks, writes hot tier, emits signals.
 
-Designed to be invoked by cron (or any process supervisor). On each
-invocation, a PID file is checked to ensure only one instance runs at a time:
-  - If the PID file exists and the recorded process is still alive, exit 0.
-  - If the PID file is stale (process gone), clean it up and start normally.
-  - On exit (clean or crash), remove the PID file.
+Runs continuously. Designed to be started by cron (single-instance via PID lock):
+- If the PID file exists and the recorded process is still alive, exit 0.
+- If the PID file is stale (process gone), clean it up and start normally.
+- On exit (clean or crash), remove the PID file.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ import sys
 from pathlib import Path
 
 import psutil
-
 import yaml
 
 from src.agent.loop import run
@@ -54,7 +52,7 @@ def _acquire_pid_lock(pid_file: Path) -> bool:
             recorded_pid = None
 
         if recorded_pid is not None and _is_running(recorded_pid):
-            logger.info("Agent already running (PID %d) — exiting", recorded_pid)
+            logger.info("Pull process already running (PID %d) — exiting", recorded_pid)
             return False
 
         logger.warning(
@@ -73,16 +71,13 @@ def _release_pid_lock(pid_file: Path) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Crypto real-time trading agent")
+    parser = argparse.ArgumentParser(description="Crypto real-time pull process")
     parser.add_argument("config", nargs="?", default="config.yaml", help="Path to config YAML")
-    parser.add_argument("--test", action="store_true", help="Run in test mode using historical data")
     args = parser.parse_args()
 
     config = load_config(args.config)
-    if args.test:
-        config = config.model_copy(update={"test_mode": True})
 
-    pid_file = Path(config.data_dir) / "agent.pid"
+    pid_file = Path(config.data_dir) / "pull.pid"
 
     if not _acquire_pid_lock(pid_file):
         sys.exit(0)
