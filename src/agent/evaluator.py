@@ -71,14 +71,6 @@ def evaluate_pending_signals(config: AppConfig) -> None:
         record["outcome"] = outcome
         lines.append(json.dumps(record))
         updated = True
-        logger.info(
-            "Evaluated signal %s (%s %s): gain=%.2f%% via %s",
-            record.get("signal_id", "?"),
-            record.get("rule_id", "?"),
-            pair,
-            outcome["gain_pct"] * 100,
-            outcome["exit_reason"],
-        )
 
     if updated:
         _rewrite_ledger(ledger, lines)

@@ -234,7 +234,7 @@ def _label_and_train(
         _training_steps += 1
 
         if _training_steps % SAVE_EVERY == 0:
-            logger.info(
+            logger.debug(
                 "DQN step %d — loss %.6f  ε=%.3f",
                 _training_steps,
                 loss,

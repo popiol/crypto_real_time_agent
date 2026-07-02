@@ -43,7 +43,6 @@ def _discover_pairs(config: AppConfig) -> list[str]:
 
 def run(config: AppConfig) -> None:
     pairs = _discover_pairs(config)
-    logger.info("Processing %d pairs", len(pairs))
     for pair in pairs:
         try:
             storage.downsample_hot_to_warm(pair, config)

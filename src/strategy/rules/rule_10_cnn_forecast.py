@@ -178,11 +178,10 @@ def _label_and_train(pending: list[dict], current_prices: dict[str, float]) -> l
 
         X = np.array([rec["features"]], dtype=np.float32)
         y = np.array([label], dtype=np.float32)
-        loss = float(_model.train_on_batch(X, y))
+        _model.train_on_batch(X, y)
         _training_steps += 1
 
         if _training_steps % SAVE_EVERY == 0:
-            logger.info("CNN training step %d — loss %.4f", _training_steps, loss)
             _save_model_and_state()
 
     return remaining

@@ -49,6 +49,8 @@ def run(config: AppConfig) -> None:
         if not ticks:
             continue
 
+        logger.info("Cycle %d: %s (%d pairs)", cycle + 1, ticks[0].polled_at.isoformat(), len(ticks))
+
         try:
             storage.write_ticks(ticks, config, reference_time=ticks[0].polled_at)
         except Exception:
