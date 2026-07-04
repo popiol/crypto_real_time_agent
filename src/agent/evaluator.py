@@ -24,8 +24,8 @@ _24H = timedelta(hours=24)
 _24H_GRACE = timedelta(hours=48)
 
 
-def evaluate_pending_signals(config: AppConfig) -> None:
-    now = datetime.now(timezone.utc)
+def evaluate_pending_signals(config: AppConfig, reference_time: datetime | None = None) -> None:
+    now = reference_time or datetime.now(timezone.utc)
 
     with open_db(config.data_dir) as con:
         pending = con.execute(

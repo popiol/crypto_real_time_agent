@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import shutil
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from src.agent.db import open_db
 from src.agent.models import AppConfig, ColdMonth, Tick, WarmCandle
@@ -285,6 +287,21 @@ def recompute_cold_tier(pair: str, config: AppConfig) -> None:
             )
 
     write_cold_months(sorted(month_map.values(), key=lambda m: m.month), pair, config)
+
+
+# ── Backtest reset ────────────────────────────────────────────────────────────
+
+
+def reset_for_backtest(config: AppConfig) -> None:
+    """Wipe all runtime data so a test run starts from a clean slate."""
+    with open_db(config.data_dir) as con:
+        for table in ("hot_ticks", "warm_candles", "cold_months", "signals"):
+            con.execute(f"DELETE FROM {table}")
+
+    for subdir in ("rules", "state"):
+        target = Path(config.data_dir) / subdir
+        if target.exists():
+            shutil.rmtree(target)
 
 
 # ── Signal ledger ─────────────────────────────────────────────────────────────

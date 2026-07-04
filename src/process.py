@@ -38,7 +38,7 @@ def _discover_pairs(config: AppConfig) -> list[str]:
     return sorted(r["pair"] for r in rows)
 
 
-def run(config: AppConfig) -> None:
+def run(config: AppConfig, reference_time=None) -> None:
     pairs = _discover_pairs(config)
     for pair in pairs:
         try:
@@ -50,7 +50,7 @@ def run(config: AppConfig) -> None:
         except Exception:
             logger.exception("Cold recompute failed for %s", pair)
     try:
-        evaluator.evaluate_pending_signals(config)
+        evaluator.evaluate_pending_signals(config, reference_time=reference_time)
     except Exception:
         logger.exception("Signal evaluation failed")
 

@@ -36,6 +36,8 @@ _ANALYZE_INTERVAL_CYCLES = 24  # one snapshot per hour → analyze once per day
 
 
 def run(config: AppConfig) -> None:
+    logger.info("Resetting all data for test run")
+    storage.reset_for_backtest(config)
     logger.info("Starting test run from %s", config.backtest_data_dir)
 
     cycle = 0
@@ -55,7 +57,7 @@ def run(config: AppConfig) -> None:
             logger.exception("Storage write failed")
 
         persist_signals(run_strategy(ticks, config), config)
-        process_run(config)
+        process_run(config, reference_time=ticks[0].polled_at)
 
         cycle += 1
         if cycle % _ANALYZE_INTERVAL_CYCLES == 0:
