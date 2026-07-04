@@ -210,12 +210,17 @@ def _label_and_train(
             continue
 
         action = rec["action"]
+        entry_price = rec["price"]
+
+        if entry_price == 0.0:
+            remaining.append(rec)
+            continue
 
         if action == 1:
-            raw_r = (current_prices[pair] - rec["price"]) / rec["price"] - PROVISION
+            raw_r = (current_prices[pair] - entry_price) / entry_price - PROVISION
             r = max(-MAX_R, min(MAX_R, raw_r))
         elif action == 2:
-            raw_r = (rec["price"] - current_prices[pair]) / rec["price"] - PROVISION
+            raw_r = (entry_price - current_prices[pair]) / entry_price - PROVISION
             r = max(-MAX_R, min(MAX_R, raw_r))
         else:
             r = 0.0
