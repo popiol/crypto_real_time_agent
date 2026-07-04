@@ -30,7 +30,7 @@ Each cycle:
      Confidence = σ(Q(s, chosen) − Q(s, hold))  ∈ (0, 1).
 
 State files:
-    data/dqn_model/         TensorFlow SavedModel
+    data/dqn_model.keras    Keras model file
     data/dqn_pending.ndjson pending experiences
     data/dqn_state.json     {"training_steps": N}
 """
@@ -70,7 +70,7 @@ MIN_TRAINING_STEPS = 20
 RECORD_INTERVAL = timedelta(hours=1)
 SAVE_EVERY = 10
 
-_MODEL_PATH = Path("data") / "dqn_model"
+_MODEL_PATH = Path("data") / "dqn_model.keras"
 _PENDING_PATH = Path("data") / "dqn_pending.ndjson"
 _STATE_PATH = Path("data") / "dqn_state.json"
 

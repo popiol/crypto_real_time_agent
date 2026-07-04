@@ -21,7 +21,7 @@ data and improves continuously. Use src/strategy/train_cnn.py to pre-train
 from a historical dataset before going live.
 
 State files:
-    data/cnn_model/         TensorFlow SavedModel
+    data/cnn_model.keras    Keras model file
     data/cnn_pending.ndjson pending training records (one JSON line each)
     data/cnn_state.json     {"training_steps": N}
 """
@@ -54,7 +54,7 @@ MIN_TRAINING_STEPS = 10                 # suppress inference until this many ste
 RECORD_INTERVAL = timedelta(hours=1)    # record at most once per pair per hour
 SAVE_EVERY = 10                         # persist model every N training steps
 
-_MODEL_PATH = Path("data") / "cnn_model"
+_MODEL_PATH = Path("data") / "cnn_model.keras"
 _PENDING_PATH = Path("data") / "cnn_pending.ndjson"
 _STATE_PATH = Path("data") / "cnn_state.json"
 
