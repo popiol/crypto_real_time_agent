@@ -9,13 +9,12 @@ Runs continuously:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
-from pathlib import Path
 
 from src.agent import collector, storage
+from src.agent.db import open_db
 from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
 from src.strategy.strategy import find_signals
 
@@ -24,21 +23,21 @@ logger = logging.getLogger(__name__)
 _MIN_VOLUME_24H_USD = 1_000.0
 
 
-def _append_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
-    ledger_path.parent.mkdir(parents=True, exist_ok=True)
-    with ledger_path.open("a", encoding="utf-8") as fh:
-        for signal in signals:
-            record = {
-                "signal_id": str(uuid.uuid4()),
-                "direction": "sell" if isinstance(signal, SellSignal) else "buy",
-                "pair": signal.pair,
-                "rule_id": signal.rule_id,
-                "emitted_at": signal.timestamp.isoformat(),
-                "price_at_signal": signal.price,
-                "confidence": signal.confidence,
-                "outcome": None,
-            }
-            fh.write(json.dumps(record) + "\n")
+def _append_signals(signals: list[BuySignal | SellSignal], config: AppConfig) -> None:
+    with open_db(config.data_dir) as con:
+        con.executemany(
+            """INSERT INTO signals
+               (signal_id, direction, pair, rule_id, emitted_at, price_at_signal, confidence)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    str(uuid.uuid4()),
+                    "sell" if isinstance(s, SellSignal) else "buy",
+                    s.pair, s.rule_id, s.timestamp.isoformat(), s.price, s.confidence,
+                )
+                for s in signals
+            ],
+        )
 
 
 def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellSignal]:
@@ -62,19 +61,19 @@ def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellS
         return []
 
 
-def persist_signals(signals: list[BuySignal | SellSignal], ledger_path: Path) -> None:
+def persist_signals(signals: list[BuySignal | SellSignal], config: AppConfig) -> None:
     if not signals:
         return
-    logger.info("Signals: %s", [(s.rule_id, s.pair, type(s).__name__) for s in signals])
+    buys = sum(1 for s in signals if isinstance(s, BuySignal))
+    logger.info("%d signal(s): %d buy, %d sell", len(signals), buys, len(signals) - buys)
     try:
-        _append_signals(signals, ledger_path)
+        _append_signals(signals, config)
     except Exception:
         logger.exception("Failed to write signals")
 
 
 def run(config: AppConfig) -> None:
     """Start the live polling loop. Runs until interrupted."""
-    ledger_path = Path(config.data_dir) / "signals.ndjson"
     logger.info("Starting pull loop. Pairs: %s", config.pairs or "auto-discover all USD pairs")
 
     while True:
@@ -91,7 +90,7 @@ def run(config: AppConfig) -> None:
         except Exception:
             logger.exception("Storage write failed")
 
-        persist_signals(run_strategy(ticks, config), ledger_path)
+        persist_signals(run_strategy(ticks, config), config)
 
         elapsed = time.monotonic() - cycle_start
         sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)

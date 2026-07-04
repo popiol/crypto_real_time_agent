@@ -17,6 +17,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from src.agent import storage
 from src.agent.models import AppConfig
 from src.strategy.strategy import ACTIVE_RULES
 from src.updater.llm import llm_structured
@@ -45,7 +46,7 @@ class _RuleDesc(BaseModel):
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    ledger_signals = _read_ledger(Path(config.data_dir) / "signals.ndjson")
+    ledger_signals = storage.read_signals(config)
 
     desc_path = state_dir / "rule_descriptions.json"
     desc_cache: dict[str, str] = _load_desc_cache(desc_path)
@@ -149,19 +150,23 @@ def _score(
             rule_id=module_rule_id,
             description=description,
             signal_count=0,
+            avg_gain_pct=0.0,
+            positive_rate=0.0,
             avg_gain_24h=0.0,
             max_gain_24h=0.0,
-            positive_rate=0.0,
             score=0.0,
             status="candidate",
         )
 
-    gains = [s["outcome"]["gain_24h_pct"] for s in matching]
-    max_gains = [s["outcome"]["max_gain_24h_pct"] for s in matching]
-    avg_gain = sum(gains) / len(gains)
-    max_gain = max(max_gains)
-    positive_rate = sum(1 for g in gains if g > 0) / len(gains)
-    composite = round(0.6 * positive_rate + 0.4 * min(1.0, max(0.0, avg_gain / 5.0)), 4)
+    gains_pct = [s["outcome"]["gain_pct"] for s in matching]
+    avg_gain_pct = sum(gains_pct) / len(gains_pct)
+    positive_rate = sum(1 for g in gains_pct if g > 0) / len(gains_pct)
+
+    with_24h = [s["outcome"] for s in matching if "gain_24h_pct" in s["outcome"]]
+    avg_gain_24h = sum(o["gain_24h_pct"] for o in with_24h) / len(with_24h) if with_24h else 0.0
+    max_gain_24h = max(o["max_gain_24h_pct"] for o in with_24h) if with_24h else 0.0
+
+    composite = round(0.6 * positive_rate + 0.4 * min(1.0, max(0.0, avg_gain_pct / 5.0)), 4)
 
     if signal_count < config.rule_min_signals:
         status = "candidate"
@@ -174,24 +179,12 @@ def _score(
         rule_id=module_rule_id,
         description=description,
         signal_count=signal_count,
-        avg_gain_24h=avg_gain,
-        max_gain_24h=max_gain,
+        avg_gain_pct=avg_gain_pct,
         positive_rate=positive_rate,
+        avg_gain_24h=avg_gain_24h,
+        max_gain_24h=max_gain_24h,
         score=composite,
         status=status,
     )
 
 
-def _read_ledger(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    records: list[dict] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                try:
-                    records.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-    return records

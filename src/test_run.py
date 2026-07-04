@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
 
 import yaml
 
@@ -37,7 +36,6 @@ _ANALYZE_INTERVAL_CYCLES = 24  # one snapshot per hour → analyze once per day
 
 
 def run(config: AppConfig) -> None:
-    ledger_path = Path(config.data_dir) / "signals.ndjson"
     logger.info("Starting test run from %s", config.backtest_data_dir)
 
     cycle = 0
@@ -56,7 +54,7 @@ def run(config: AppConfig) -> None:
         except Exception:
             logger.exception("Storage write failed")
 
-        persist_signals(run_strategy(ticks, config), ledger_path)
+        persist_signals(run_strategy(ticks, config), config)
         process_run(config)
 
         cycle += 1

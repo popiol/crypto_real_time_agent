@@ -1,112 +1,83 @@
 """Signal outcome evaluator.
 
-Runs every hour. Evaluates pending buy signals using two triggers:
+Runs every hour. Evaluates pending buy signals:
+  1. Sell signal match — exit price = close of first warm candle after the sell signal.
+  2. Timeout — if no sell signal after 20 days, exit price = latest warm candle close.
 
-  1. Sell signal match — if a sell signal was emitted for the same pair after
-     this buy signal, outcome = sell_price / buy_price - 1.
-
-  2. Timeout — if the buy signal is older than TIMEOUT_DAYS with no matching
-     sell signal, outcome = current_price / buy_price - 1 (using latest warm candle).
-
-Sell signals are not evaluated; they serve only as triggers for buy signal evaluation.
+Also tracks 24h metrics (gain_24h_pct, max_gain_24h_pct) while warm candles
+still cover the 24h window after signal emission (i.e. when signal is 24-48h old).
 """
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
 from src.agent import storage
+from src.agent.db import open_db
 from src.agent.models import AppConfig
 
 logger = logging.getLogger(__name__)
 
 _TIMEOUT = timedelta(days=20)
+_24H = timedelta(hours=24)
+_24H_GRACE = timedelta(hours=48)
 
 
 def evaluate_pending_signals(config: AppConfig) -> None:
-    ledger = Path(config.data_dir) / "signals.ndjson"
-    if not ledger.exists():
-        return
-
     now = datetime.now(timezone.utc)
-    raw_records = _load_ledger(ledger)
 
-    sell_index = _build_sell_index(raw_records)
+    with open_db(config.data_dir) as con:
+        pending = con.execute(
+            """SELECT signal_id, pair, emitted_at, price_at_signal, gain_24h_pct
+               FROM signals WHERE direction='buy' AND gain_pct IS NULL"""
+        ).fetchall()
 
-    lines: list[str] = []
-    updated = False
+        if not pending:
+            return
 
-    for record, original_line in raw_records:
-        if record is None:
-            lines.append(original_line)
+        sell_rows = con.execute(
+            "SELECT pair, emitted_at FROM signals WHERE direction='sell'"
+        ).fetchall()
+
+    sell_index: dict[str, list[datetime]] = {}
+    for r in sell_rows:
+        dt = _parse_dt(r["emitted_at"])
+        if dt is not None:
+            sell_index.setdefault(r["pair"], []).append(dt)
+
+    for row in pending:
+        signal_id = row["signal_id"]
+        pair = row["pair"]
+        emitted_at = _parse_dt(row["emitted_at"])
+        price_at_signal = row["price_at_signal"]
+
+        if emitted_at is None or price_at_signal is None:
             continue
 
-        if record.get("outcome") is not None:
-            lines.append(original_line)
-            continue
+        if row["gain_24h_pct"] is None:
+            age = now - emitted_at
+            if _24H <= age <= _24H_GRACE:
+                metrics = _compute_24h_metrics(pair, emitted_at, price_at_signal, config)
+                if metrics is not None:
+                    with open_db(config.data_dir) as con:
+                        con.execute(
+                            "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
+                            (metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], signal_id),
+                        )
 
-        if record.get("direction", "buy") != "buy":
-            lines.append(original_line)
-            continue
-
-        pair = record.get("pair", "")
-        price_at_signal = record.get("price_at_signal")
-        emitted_at = _parse_dt(record.get("emitted_at", ""))
-
-        if not pair or price_at_signal is None or emitted_at is None:
-            lines.append(original_line)
-            continue
-
-        outcome = _resolve_outcome(
-            pair, emitted_at, float(price_at_signal), now, sell_index, config
-        )
-        if outcome is None:
-            lines.append(original_line)
-            continue
-
-        record["outcome"] = outcome
-        lines.append(json.dumps(record))
-        updated = True
-
-    if updated:
-        _rewrite_ledger(ledger, lines)
+        outcome = _resolve_outcome(pair, emitted_at, price_at_signal, now, sell_index, config)
+        if outcome is not None:
+            with open_db(config.data_dir) as con:
+                con.execute(
+                    """UPDATE signals SET evaluated_at=?, exit_price=?, exit_reason=?, gain_pct=?
+                       WHERE signal_id=?""",
+                    (outcome["evaluated_at"], outcome["exit_price"],
+                     outcome["exit_reason"], outcome["gain_pct"], signal_id),
+                )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _load_ledger(path: Path) -> list[tuple[dict | None, str]]:
-    result: list[tuple[dict | None, str]] = []
-    for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            result.append((json.loads(line), line))
-        except json.JSONDecodeError:
-            logger.warning("Skipping malformed ledger line %d", lineno)
-            result.append((None, line))
-    return result
-
-
-def _build_sell_index(
-    raw_records: list[tuple[dict | None, str]],
-) -> dict[str, list[tuple[datetime, float]]]:
-    """Map pair → list of (emitted_at, price) for all sell signals."""
-    index: dict[str, list[tuple[datetime, float]]] = {}
-    for record, _ in raw_records:
-        if record is None or record.get("direction") != "sell":
-            continue
-        pair = record.get("pair", "")
-        emitted_at = _parse_dt(record.get("emitted_at", ""))
-        price = record.get("price_at_signal")
-        if pair and emitted_at is not None and price is not None:
-            index.setdefault(pair, []).append((emitted_at, float(price)))
-    return index
 
 
 def _resolve_outcome(
@@ -114,14 +85,18 @@ def _resolve_outcome(
     emitted_at: datetime,
     price_at_signal: float,
     now: datetime,
-    sell_index: dict[str, list[tuple[datetime, float]]],
+    sell_index: dict[str, list[datetime]],
     config: AppConfig,
 ) -> dict | None:
-    sells_after = [
-        (dt, p) for dt, p in sell_index.get(pair, []) if dt > emitted_at
-    ]
+    sells_after = [dt for dt in sell_index.get(pair, []) if dt > emitted_at]
     if sells_after:
-        _, exit_price = min(sells_after, key=lambda x: x[0])
+        sell_time = min(sells_after)
+        exit_price = _price_after(pair, sell_time, config)
+        if exit_price is None:
+            logger.warning(
+                "No warm candle after sell signal for %s at %s — leaving pending", pair, sell_time
+            )
+            return None
         return {
             "evaluated_at": now.isoformat(),
             "exit_price": exit_price,
@@ -144,9 +119,32 @@ def _resolve_outcome(
     return None
 
 
+def _price_after(pair: str, after: datetime, config: AppConfig) -> float | None:
+    """Close of the first warm candle strictly after `after`."""
+    warm = storage.read_warm_candles(pair, config)
+    candidates = [c for c in warm if c.hour > after]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda c: c.hour).close
+
+
 def _latest_price(pair: str, config: AppConfig) -> float | None:
     warm = storage.read_warm_candles(pair, config)
     return warm[-1].close if warm else None
+
+
+def _compute_24h_metrics(
+    pair: str, emitted_at: datetime, price_at_signal: float, config: AppConfig
+) -> dict | None:
+    warm = storage.read_warm_candles(pair, config)
+    window_end = emitted_at + _24H
+    candles = [c for c in warm if emitted_at <= c.hour <= window_end]
+    if not candles:
+        return None
+    return {
+        "gain_24h_pct": candles[-1].close / price_at_signal - 1,
+        "max_gain_24h_pct": max(c.high for c in candles) / price_at_signal - 1,
+    }
 
 
 def _parse_dt(value: str) -> datetime | None:
@@ -157,15 +155,3 @@ def _parse_dt(value: str) -> datetime | None:
         return dt
     except (ValueError, TypeError):
         return None
-
-
-def _rewrite_ledger(path: Path, lines: list[str]) -> None:
-    tmp = path.with_suffix(".ndjson.tmp")
-    try:
-        with tmp.open("w", encoding="utf-8") as fh:
-            for line in lines:
-                fh.write(line + "\n")
-        os.replace(tmp, path)
-    except Exception:
-        logger.exception("Failed to rewrite signal ledger")
-        tmp.unlink(missing_ok=True)

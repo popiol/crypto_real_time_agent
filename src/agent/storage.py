@@ -4,49 +4,163 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
+from src.agent.db import open_db
 from src.agent.models import AppConfig, ColdMonth, Tick, WarmCandle
 
 logger = logging.getLogger(__name__)
 
 
-def _hot_path(data_dir: str, pair: str) -> Path:
-    return Path(data_dir) / pair / "hot.ndjson"
+def _parse_dt(value: str) -> datetime:
+    dt = datetime.fromisoformat(value)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
 
 
-def _warm_path(data_dir: str, pair: str) -> Path:
-    return Path(data_dir) / pair / "warm.json"
+def _tick_from_row(row) -> Tick:
+    return Tick(
+        pair=row["pair"],
+        polled_at=_parse_dt(row["polled_at"]),
+        last_price=row["last_price"],
+        bid_price=row["bid_price"],
+        bid_volume=row["bid_volume"],
+        ask_price=row["ask_price"],
+        ask_volume=row["ask_volume"],
+        volume_24h=row["volume_24h"],
+        mid_price=row["mid_price"],
+        spread_abs=row["spread_abs"],
+        spread_rel=row["spread_rel"],
+        order_book=json.loads(row["order_book"]) if row["order_book"] else None,
+    )
+
+
+def _candle_from_row(row) -> WarmCandle:
+    return WarmCandle(
+        hour=_parse_dt(row["hour"]),
+        open_price=row["open_price"],
+        high=row["high"],
+        low=row["low"],
+        close=row["close"],
+        avg_spread_rel=row["avg_spread_rel"],
+    )
+
+
+def _cold_from_row(row) -> ColdMonth:
+    return ColdMonth(
+        month=row["month"],
+        min_price=row["min_price"],
+        max_price=row["max_price"],
+        avg_price=row["avg_price"],
+        avg_daily_spread=row["avg_daily_spread"],
+        candle_count=row["candle_count"],
+        last_candle_hour=_parse_dt(row["last_candle_hour"]),
+    )
+
+
+# ── Hot tier ──────────────────────────────────────────────────────────────────
+
+
+def read_ticks(pair: str, config: AppConfig) -> list[Tick]:
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT * FROM hot_ticks WHERE pair=? ORDER BY polled_at ASC", (pair,)
+        ).fetchall()
+    return [_tick_from_row(r) for r in rows]
+
+
+def write_ticks(
+    ticks: list[Tick],
+    config: AppConfig,
+    reference_time: datetime | None = None,
+) -> None:
+    now = reference_time or datetime.now(timezone.utc)
+    cutoff_str = (now - timedelta(seconds=config.hot_tier_retention_seconds)).isoformat()
+
+    with open_db(config.data_dir) as con:
+        con.executemany(
+            """INSERT INTO hot_ticks
+               (pair, polled_at, last_price, bid_price, bid_volume,
+                ask_price, ask_volume, volume_24h, mid_price, spread_abs, spread_rel, order_book)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    t.pair, t.polled_at.isoformat(),
+                    t.last_price, t.bid_price, t.bid_volume,
+                    t.ask_price, t.ask_volume, t.volume_24h,
+                    t.mid_price, t.spread_abs, t.spread_rel,
+                    t.order_book.model_dump_json() if t.order_book else None,
+                )
+                for t in ticks
+            ],
+        )
+        for pair in {t.pair for t in ticks}:
+            _prune_pair(pair, cutoff_str, con)
+
+
+def _prune_pair(pair: str, cutoff_str: str, con) -> None:
+    expired = con.execute(
+        "SELECT * FROM hot_ticks WHERE pair=? AND polled_at<? ORDER BY polled_at ASC",
+        (pair, cutoff_str),
+    ).fetchall()
+
+    if expired:
+        existing_rows = con.execute(
+            """SELECT * FROM (
+                 SELECT * FROM warm_candles WHERE pair=? ORDER BY hour DESC LIMIT 24
+               ) ORDER BY hour ASC""",
+            (pair,),
+        ).fetchall()
+        merged = _merge_into_candles(
+            [_candle_from_row(r) for r in existing_rows],
+            [_tick_from_row(r) for r in expired],
+        )
+        _upsert_warm_candles(merged, pair, con)
+
+    con.execute(
+        "DELETE FROM hot_ticks WHERE pair=? AND polled_at<?", (pair, cutoff_str)
+    )
+
+
+def _upsert_warm_candles(candles: list[WarmCandle], pair: str, con) -> None:
+    con.executemany(
+        """INSERT INTO warm_candles (pair, hour, open_price, high, low, close, avg_spread_rel)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(pair, hour) DO UPDATE SET
+             open_price=excluded.open_price, high=excluded.high,
+             low=excluded.low, close=excluded.close,
+             avg_spread_rel=excluded.avg_spread_rel""",
+        [
+            (pair, c.hour.isoformat(), c.open_price, c.high, c.low, c.close, c.avg_spread_rel)
+            for c in candles
+        ],
+    )
+    con.execute(
+        """DELETE FROM warm_candles WHERE pair=? AND hour NOT IN (
+             SELECT hour FROM warm_candles WHERE pair=? ORDER BY hour DESC LIMIT 24
+           )""",
+        (pair, pair),
+    )
+
+
+# ── Warm tier ─────────────────────────────────────────────────────────────────
 
 
 def read_warm_candles(pair: str, config: AppConfig) -> list[WarmCandle]:
-    path = _warm_path(config.data_dir, pair)
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8") as fh:
-        raw = json.load(fh)
-    candles: list[WarmCandle] = []
-    for entry in raw:
-        try:
-            candles.append(WarmCandle.model_validate(entry))
-        except Exception as exc:
-            logger.warning("Skipping malformed warm candle for %s: %s", pair, exc)
-    return candles
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            """SELECT * FROM (
+                 SELECT * FROM warm_candles WHERE pair=? ORDER BY hour DESC LIMIT 24
+               ) ORDER BY hour ASC""",
+            (pair,),
+        ).fetchall()
+    return [_candle_from_row(r) for r in rows]
 
 
 def write_warm_candles(candles: list[WarmCandle], pair: str, config: AppConfig) -> None:
-    path = _warm_path(config.data_dir, pair)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".json.tmp")
-    try:
-        with tmp_path.open("w", encoding="utf-8") as fh:
-            json.dump([c.model_dump(mode="json") for c in candles], fh)
-        os.replace(tmp_path, path)
-    except Exception:
-        logger.exception("Failed to write warm candles for %s", pair)
-        tmp_path.unlink(missing_ok=True)
+    with open_db(config.data_dir) as con:
+        _upsert_warm_candles(candles, pair, con)
 
 
 def _merge_into_candles(
@@ -88,7 +202,6 @@ def _merge_into_candles(
 
 
 def downsample_hot_to_warm(pair: str, config: AppConfig) -> None:
-    """Merge all current hot-tier ticks into the warm tier."""
     ticks = read_ticks(pair, config)
     if not ticks:
         return
@@ -96,156 +209,42 @@ def downsample_hot_to_warm(pair: str, config: AppConfig) -> None:
     write_warm_candles(_merge_into_candles(existing, ticks), pair, config)
 
 
-def write_ticks(
-    ticks: list[Tick],
-    config: AppConfig,
-    reference_time: datetime | None = None,
-) -> None:
-    """Append ticks to the hot tier and prune entries outside the retention window.
-
-    reference_time overrides datetime.now() for the pruning cutoff, used in
-    test mode where tick timestamps are historical rather than current.
-    """
-    for tick in ticks:
-        path = _hot_path(config.data_dir, tick.pair)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as fh:
-            fh.write(tick.model_dump_json() + "\n")
-
-    affected_pairs = {t.pair for t in ticks}
-    now = reference_time or datetime.now(timezone.utc)
-    cutoff = now - timedelta(seconds=config.hot_tier_retention_seconds)
-    for pair in affected_pairs:
-        _prune_and_downsample(pair, cutoff, config)
-
-
-def read_ticks(pair: str, config: AppConfig) -> list[Tick]:
-    """Read all ticks currently in the hot tier for the given pair."""
-    path = _hot_path(config.data_dir, pair)
-    if not path.exists():
-        return []
-
-    ticks: list[Tick] = []
-    with path.open("r", encoding="utf-8") as fh:
-        for lineno, line in enumerate(fh, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                ticks.append(Tick.model_validate_json(line))
-            except Exception as exc:
-                logger.warning(
-                    "Skipping malformed line %d in %s: %s", lineno, path, exc
-                )
-    return ticks
-
-
-def _classify_line(
-    line: str, cutoff: datetime
-) -> tuple[bool, Tick | None]:
-    """Return (keep, tick_or_none). keep=True → retain in hot tier."""
-    try:
-        raw = json.loads(line)
-        polled_at = datetime.fromisoformat(raw["polled_at"])
-        if polled_at.tzinfo is None:
-            polled_at = polled_at.replace(tzinfo=timezone.utc)
-        if polled_at >= cutoff:
-            return True, None
-        try:
-            return False, Tick.model_validate(raw)
-        except Exception:
-            return False, None
-    except Exception:
-        return True, None  # malformed: keep to avoid silent data loss
-
-
-def _prune_and_downsample(pair: str, cutoff: datetime, config: AppConfig) -> None:
-    """Rewrite the hot file keeping only ticks at or after cutoff.
-
-    Ticks that fall outside the retention window are aggregated into warm
-    candles before being discarded so no price data is lost.
-    """
-    path = _hot_path(config.data_dir, pair)
-    if not path.exists():
-        return
-
-    kept: list[str] = []
-    pruned_ticks: list[Tick] = []
-
-    with path.open("r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            keep, tick = _classify_line(line, cutoff)
-            if keep:
-                kept.append(line)
-            elif tick is not None:
-                pruned_ticks.append(tick)
-
-    if pruned_ticks:
-        existing = read_warm_candles(pair, config)
-        write_warm_candles(_merge_into_candles(existing, pruned_ticks), pair, config)
-
-    tmp_path = path.with_suffix(".ndjson.tmp")
-    try:
-        with tmp_path.open("w", encoding="utf-8") as fh:
-            for line in kept:
-                fh.write(line + "\n")
-        os.replace(tmp_path, path)
-    except Exception:
-        logger.exception("Failed to prune hot tier for %s", pair)
-        tmp_path.unlink(missing_ok=True)
-
-
 # ── Cold tier ─────────────────────────────────────────────────────────────────
 
 
-def _cold_path(data_dir: str, pair: str) -> Path:
-    return Path(data_dir) / pair / "cold.json"
-
-
 def read_cold_months(pair: str, config: AppConfig) -> list[ColdMonth]:
-    path = _cold_path(config.data_dir, pair)
-    if not path.exists():
-        return []
-    with path.open("r", encoding="utf-8") as fh:
-        raw = json.load(fh)
-    months: list[ColdMonth] = []
-    for entry in raw:
-        try:
-            months.append(ColdMonth.model_validate(entry))
-        except Exception as exc:
-            logger.warning("Skipping malformed cold entry for %s: %s", pair, exc)
-    return months
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT * FROM cold_months WHERE pair=? ORDER BY month ASC", (pair,)
+        ).fetchall()
+    return [_cold_from_row(r) for r in rows]
 
 
 def write_cold_months(months: list[ColdMonth], pair: str, config: AppConfig) -> None:
-    path = _cold_path(config.data_dir, pair)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = path.with_suffix(".json.tmp")
-    try:
-        with tmp_path.open("w", encoding="utf-8") as fh:
-            json.dump([m.model_dump(mode="json") for m in months], fh)
-        os.replace(tmp_path, path)
-    except Exception:
-        logger.exception("Failed to write cold months for %s", pair)
-        tmp_path.unlink(missing_ok=True)
+    with open_db(config.data_dir) as con:
+        con.executemany(
+            """INSERT INTO cold_months
+               (pair, month, min_price, max_price, avg_price,
+                avg_daily_spread, candle_count, last_candle_hour)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(pair, month) DO UPDATE SET
+                 min_price=excluded.min_price, max_price=excluded.max_price,
+                 avg_price=excluded.avg_price, avg_daily_spread=excluded.avg_daily_spread,
+                 candle_count=excluded.candle_count, last_candle_hour=excluded.last_candle_hour""",
+            [
+                (pair, m.month, m.min_price, m.max_price, m.avg_price,
+                 m.avg_daily_spread, m.candle_count, m.last_candle_hour.isoformat())
+                for m in months
+            ],
+        )
 
 
 def recompute_cold_tier(pair: str, config: AppConfig) -> None:
-    """Incorporate new warm candles into the cold-tier monthly archive.
-
-    Each warm candle is counted exactly once: candles with an hour already
-    recorded in last_candle_hour for that month are skipped.
-    """
     warm = read_warm_candles(pair, config)
     if not warm:
         return
 
-    month_map: dict[str, ColdMonth] = {
-        m.month: m for m in read_cold_months(pair, config)
-    }
+    month_map: dict[str, ColdMonth] = {m.month: m for m in read_cold_months(pair, config)}
 
     by_month: dict[str, list[WarmCandle]] = {}
     for candle in warm:
@@ -254,7 +253,6 @@ def recompute_cold_tier(pair: str, config: AppConfig) -> None:
 
     for month_key, candles in by_month.items():
         candles.sort(key=lambda c: c.hour)
-
         if month_key in month_map:
             old = month_map[month_key]
             new = [c for c in candles if c.hour > old.last_candle_hour]
@@ -262,8 +260,7 @@ def recompute_cold_tier(pair: str, config: AppConfig) -> None:
                 continue
             prices = [c.close for c in new]
             spreads = [c.avg_spread_rel for c in new]
-            n = len(new)
-            total = old.candle_count + n
+            total = old.candle_count + len(new)
             month_map[month_key] = ColdMonth(
                 month=month_key,
                 min_price=min(old.min_price, min(prices)),
@@ -287,6 +284,40 @@ def recompute_cold_tier(pair: str, config: AppConfig) -> None:
                 last_candle_hour=candles[-1].hour,
             )
 
-    write_cold_months(
-        sorted(month_map.values(), key=lambda m: m.month), pair, config
-    )
+    write_cold_months(sorted(month_map.values(), key=lambda m: m.month), pair, config)
+
+
+# ── Signal ledger ─────────────────────────────────────────────────────────────
+
+
+def read_signals(config: AppConfig) -> list[dict]:
+    """Return all signal records with outcome nested as a dict (or None if unresolved)."""
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT * FROM signals ORDER BY emitted_at ASC"
+        ).fetchall()
+    return [_signal_row_to_dict(r) for r in rows]
+
+
+def _signal_row_to_dict(row) -> dict:
+    outcome = None
+    if row["gain_pct"] is not None:
+        outcome = {
+            "evaluated_at": row["evaluated_at"],
+            "exit_price": row["exit_price"],
+            "exit_reason": row["exit_reason"],
+            "gain_pct": row["gain_pct"],
+        }
+        if row["gain_24h_pct"] is not None:
+            outcome["gain_24h_pct"] = row["gain_24h_pct"]
+            outcome["max_gain_24h_pct"] = row["max_gain_24h_pct"]
+    return {
+        "signal_id": row["signal_id"],
+        "direction": row["direction"],
+        "pair": row["pair"],
+        "rule_id": row["rule_id"],
+        "emitted_at": row["emitted_at"],
+        "price_at_signal": row["price_at_signal"],
+        "confidence": row["confidence"],
+        "outcome": outcome,
+    }

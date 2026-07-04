@@ -140,7 +140,8 @@ def _state_vec(candles: list[WarmCandle]) -> list[float]:
     mean_close = statistics.mean(closes) or 1.0
     flat: list[float] = []
     for i, close in enumerate(closes):
-        roc = (closes[i] - closes[i - 1]) / closes[i - 1] if i > 0 else 0.0
+        prev = closes[i - 1]
+        roc = (closes[i] - prev) / prev if i > 0 and prev != 0.0 else 0.0
         flat.extend([close / mean_close, roc])
     return flat
 

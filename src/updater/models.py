@@ -27,9 +27,10 @@ class RuleScore(BaseModel):
     rule_id: str
     description: str
     signal_count: int
+    avg_gain_pct: float
+    positive_rate: float
     avg_gain_24h: float
     max_gain_24h: float
-    positive_rate: float
     score: float
     status: Literal["candidate", "active", "deprecate"]
 

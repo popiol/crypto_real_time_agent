@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import argparse
 import logging
-from pathlib import Path
-
 import yaml
 
 from src.agent import evaluator, storage
@@ -32,13 +30,12 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 def _discover_pairs(config: AppConfig) -> list[str]:
     if config.pairs:
         return list(config.pairs)
-    data_root = Path(config.data_dir)
-    if not data_root.exists():
-        return []
-    return sorted(
-        p.name for p in data_root.iterdir()
-        if p.is_dir() and (p / "hot.ndjson").exists()
-    )
+    from src.agent.db import open_db
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT DISTINCT pair FROM hot_ticks UNION SELECT DISTINCT pair FROM warm_candles"
+        ).fetchall()
+    return sorted(r["pair"] for r in rows)
 
 
 def run(config: AppConfig) -> None:
