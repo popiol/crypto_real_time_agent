@@ -46,7 +46,7 @@ GAIN_THRESHOLD = 0.01   # 1% gain → positive label
 BATCH_SIZE = 64
 EPOCHS = 20
 MIN_PAIR_COVERAGE = 0.8  # drop pairs present in < 80% of snapshots
-MODEL_PATH = Path("data") / "cnn_model"
+MODEL_PATH = Path("data") / "rules" / "cnn" / "model.keras"
 
 
 # ── Pair name normalisation (mirrors collector._normalise_pair) ────────────────

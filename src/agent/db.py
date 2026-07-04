@@ -9,7 +9,7 @@ from pathlib import Path
 
 @contextmanager
 def open_db(data_dir: str):
-    path = Path(data_dir) / "agent.db"
+    path = Path(data_dir) / "assets" / "agent.db"
     path.parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(path), timeout=30)
     con.row_factory = sqlite3.Row
