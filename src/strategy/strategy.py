@@ -16,7 +16,6 @@ from collections.abc import Callable, Sequence
 
 from src.agent.models import BuySignal, PairData, SellSignal
 from src.strategy.rules.rule_01_spread_compression.v1 import spread_compression_spike
-from src.strategy.rules.rule_09_markov_chain.v2 import enhance_markov_trend_confirmation
 from src.strategy.rules.rule_02_bollinger_band.v1 import bollinger_band_lower_touch
 from src.strategy.rules.rule_03_ou_spread.v1 import ou_spread_compression
 from src.strategy.rules.rule_06_kalman_velocity.v1 import kalman_velocity_reversal
@@ -49,5 +48,4 @@ def find_signals(data: MarketData) -> list[Signal]:
             signals.extend(rule_fn(data))
         except Exception:  # noqa: BLE001
             logging.exception("Rule %s raised an exception", rule_fn.__name__)
-    return signals    enhance_markov_trend_confirmation,
-
+    return signals
