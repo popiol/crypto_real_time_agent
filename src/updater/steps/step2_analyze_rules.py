@@ -1,10 +1,11 @@
 """Step 2 — Analyze current rules.
 
 For each registered rule:
-  - Generates a plain-language description via LLM (once per version; cached).
+  - Generates a plain-language description via LLM (once per version; cached
+    from the previous run's rule_evaluation.json).
   - Computes numeric scores from the signal ledger.
 
-Writes rule_descriptions.json and rule_evaluation.json.
+Writes rule_evaluation.json (sole source of descriptions + scores).
 """
 
 from __future__ import annotations
@@ -21,12 +22,7 @@ from src.agent import storage
 from src.agent.models import AppConfig
 from src.strategy.strategy import ACTIVE_RULES
 from src.updater.llm import llm_structured
-from src.updater.models import (
-    RuleDescription,
-    RuleDescriptions,
-    RuleEvaluation,
-    RuleScore,
-)
+from src.updater.models import RuleEvaluation, RuleScore
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +44,8 @@ class _RuleDesc(BaseModel):
 def run(config: AppConfig, state_dir: Path) -> None:
     ledger_signals = storage.read_signals(config)
 
-    desc_path = state_dir / "rule_descriptions.json"
-    desc_cache: dict[str, str] = _load_desc_cache(desc_path)
+    # Load description cache from the prior run's rule_evaluation.json
+    desc_cache: dict[str, str] = _load_desc_cache(state_dir / "rule_evaluation.json")
 
     scores: list[RuleScore] = []
     for rule_fn in ACTIVE_RULES:
@@ -60,15 +56,6 @@ def run(config: AppConfig, state_dir: Path) -> None:
         desc_cache[module_rule_id] = description
         scores.append(_score(module_rule_id, signal_rule_id, description, ledger_signals, config))
 
-    # Persist updated description cache
-    desc_path.write_text(
-        RuleDescriptions(
-            rules=[RuleDescription(rule_id=k, description=v) for k, v in desc_cache.items()]
-        ).model_dump_json(indent=2),
-        encoding="utf-8",
-    )
-
-    # Generate summary and write rule evaluation
     try:
         summary_result = llm_structured(
             model=config.llm_model,
@@ -94,14 +81,15 @@ def run(config: AppConfig, state_dir: Path) -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _load_desc_cache(path: Path) -> dict[str, str]:
-    if not path.exists():
+def _load_desc_cache(rule_eval_path: Path) -> dict[str, str]:
+    """Extract description cache from the previous rule_evaluation.json."""
+    if not rule_eval_path.exists():
         return {}
     try:
-        parsed = RuleDescriptions.model_validate_json(path.read_text(encoding="utf-8"))
-        return {r.rule_id: r.description for r in parsed.rules}
+        prior = RuleEvaluation.model_validate_json(rule_eval_path.read_text(encoding="utf-8"))
+        return {r.rule_id: r.description for r in prior.rules if r.description}
     except Exception:
-        logger.warning("Could not parse rule_descriptions.json; rebuilding")
+        logger.warning("Could not parse prior rule_evaluation.json for description cache")
         return {}
 
 
@@ -187,5 +175,3 @@ def _score(
         score=composite,
         status=status,
     )
-
-
