@@ -16,6 +16,7 @@ from collections.abc import Callable, Sequence
 
 from src.agent.models import BuySignal, PairData, SellSignal
 from src.strategy.rules.rule_01_spread_compression.v1 import spread_compression_spike
+from src.strategy.rules.rule_01_spread_compression.v2 import enhanced_spread_compression_with_volume_confirmation
 from src.strategy.rules.rule_02_bollinger_band.v1 import bollinger_band_lower_touch
 from src.strategy.rules.rule_03_ou_spread.v1 import ou_spread_compression
 from src.strategy.rules.rule_06_kalman_velocity.v1 import kalman_velocity_reversal
@@ -37,6 +38,7 @@ ACTIVE_RULES: list[RuleFn] = [
     rate_of_change_momentum,
     cnn_price_forecast,
     dqn_buy_signal,
+    enhanced_spread_compression_with_volume_confirmation,
 ]
 
 
