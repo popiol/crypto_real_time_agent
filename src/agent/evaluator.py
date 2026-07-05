@@ -93,9 +93,6 @@ def _resolve_outcome(
         sell_time = min(sells_after)
         exit_price = _price_after(pair, sell_time, config)
         if exit_price is None:
-            logger.warning(
-                "No warm candle after sell signal for %s at %s — leaving pending", pair, sell_time
-            )
             return None
         return {
             "evaluated_at": now.isoformat(),
@@ -120,12 +117,14 @@ def _resolve_outcome(
 
 
 def _price_after(pair: str, after: datetime, config: AppConfig) -> float | None:
-    """Close of the first warm candle strictly after `after`."""
+    """Close of the first warm candle strictly after `after`, or latest if none yet."""
     warm = storage.read_warm_candles(pair, config)
-    candidates = [c for c in warm if c.hour > after]
-    if not candidates:
+    if not warm:
         return None
-    return min(candidates, key=lambda c: c.hour).close
+    candidates = [c for c in warm if c.hour > after]
+    if candidates:
+        return min(candidates, key=lambda c: c.hour).close
+    return warm[-1].close
 
 
 def _latest_price(pair: str, config: AppConfig) -> float | None:
