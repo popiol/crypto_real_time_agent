@@ -22,8 +22,10 @@ import re
 import subprocess
 from pathlib import Path
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
 from src.agent.models import AppConfig
-from src.updater.llm import llm_structured
+from src.updater.llm import make_llm
 from src.updater.models import (
     IdeaBacklog,
     ImplementedRule,
@@ -177,26 +179,43 @@ def _rule_id_to_import_path(rule_id: str) -> str:
 
 
 def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
-    return llm_structured(
-        model=model,
-        system=_IMPLEMENT_SYSTEM,
-        user=(
-            f"Implement this trading rule idea as a Python module.\n\n"
-            f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
-            f"Rule ID: {rule_id}\n\n"
-            f"Reference rule structure to follow exactly:\n{_REFERENCE_RULE}\n\n"
-            "Requirements:\n"
-            f"1. Set RULE_ID = \"{rule_id}\" exactly.\n"
-            "2. Define MarketData = dict[str, PairData].\n"
-            "3. Implement one public function with signature "
-            "   def <func>(data: MarketData) -> list[BuySignal | SellSignal].\n"
-            "4. Import only: standard library, numpy, scipy, statistics, "
-            "   src.agent.models.\n"
-            "5. Handle insufficient data gracefully (return []).\n"
-            f"6. Set function_name to the function's name, idea_id to '{idea.idea_id}', "
-            f"   rule_id to '{rule_id}'."
-        ),
-        output_type=ImplementedRule,
+    """Generate rule code as plain text to avoid JSON string-length limits in structured output."""
+    llm = make_llm(model)
+    user_prompt = (
+        f"Implement this trading rule idea as a Python module.\n\n"
+        f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
+        f"Rule ID: {rule_id}\n\n"
+        f"Reference rule structure to follow exactly:\n{_REFERENCE_RULE}\n\n"
+        "Requirements:\n"
+        f"1. Set RULE_ID = \"{rule_id}\" exactly.\n"
+        "2. Define MarketData = dict[str, PairData].\n"
+        "3. Implement one public function with signature "
+        "   def <func>(data: MarketData) -> list[BuySignal | SellSignal].\n"
+        "4. Import only: standard library, numpy, scipy, statistics, "
+        "   src.agent.models.\n"
+        "5. Handle insufficient data gracefully (return []).\n"
+        "6. Return ONLY the raw Python source code — no markdown fences, no explanation."
+    )
+    response = llm.invoke([SystemMessage(content=_IMPLEMENT_SYSTEM), HumanMessage(content=user_prompt)])
+    raw = response.content
+    code = (raw if isinstance(raw, str) else "".join(p if isinstance(p, str) else p.get("text", "") for p in raw)).strip()
+
+    # Strip accidental markdown fences
+    if code.startswith("```"):
+        code = re.sub(r"^```[a-z]*\n?", "", code)
+        code = re.sub(r"\n?```$", "", code)
+
+    # Extract function name from the generated code
+    m = re.search(r"^def (\w+)\(data:", code, re.MULTILINE)
+    if not m:
+        raise ValueError(f"Could not find public function in generated code for {rule_id}")
+    function_name = m.group(1)
+
+    return ImplementedRule(
+        idea_id=idea.idea_id,
+        rule_id=rule_id,
+        function_name=function_name,
+        code=code,
     )
 
 
