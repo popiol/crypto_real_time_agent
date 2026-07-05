@@ -4,6 +4,7 @@ Generates new rule ideas until stop conditions are met:
   - At least 3 open ideas AND highest-scored open idea has score >= 0.6, OR
   - 3 new ideas generated this cycle.
 
+Each idea is either a new rule or a revision of an existing rule (new version).
 Writes idea_backlog.json.
 """
 
@@ -15,9 +16,8 @@ import uuid
 from pathlib import Path
 
 from src.agent.models import AppConfig
-from src.strategy.strategy import ACTIVE_RULES
 from src.updater.llm import llm_structured
-from src.updater.models import IdeaBacklog, LongTermPlan, RuleDescriptions, RuleIdea
+from src.updater.models import IdeaBacklog, LongTermPlan, RuleEvaluation, RuleIdea
 
 logger = logging.getLogger(__name__)
 
@@ -80,19 +80,20 @@ def _generate_one(
     result = llm_structured(
         model=model,
         system=(
-            "You are a quantitative trading researcher designing buy-signal rules "
+            "You are a quantitative trading researcher designing buy/sell signal rules "
             "for a crypto trading agent."
         ),
         user=(
-            "Generate one new trading rule idea that aligns with the long-term plan "
-            "and has not already been proposed.\n\n"
+            "Generate one trading rule idea — either a brand-new rule or a revised version "
+            "of an existing rule that improves on its weaknesses. "
+            "Choose whichever makes more strategic sense given the plan and current rule performance.\n\n"
             f"Long-term plan:\n{plan.model_dump_json(indent=2)}\n\n"
-            f"Currently implemented rules:\n{rule_summary}\n\n"
-            f"Open ideas already in backlog:\n{open_ideas_summary}\n\n"
+            f"Currently implemented rules (with performance):\n{rule_summary}\n\n"
+            f"Open ideas already in backlog (do not duplicate):\n{open_ideas_summary}\n\n"
             f"Use this idea_id: {new_id}\n"
             "Set status to 'proposed' and score to null.\n"
-            "For a new_rule idea, set target_rule to null. "
-            "For a modify_rule idea, set target_rule to the rule_id to modify."
+            "For a new_rule idea: set kind='new_rule', target_rule=null.\n"
+            "For a modify_rule idea: set kind='modify_rule', target_rule=<rule_id of the rule to revise>."
         ),
         output_type=RuleIdea,
     )
@@ -112,18 +113,33 @@ def _load_backlog(path: Path) -> IdeaBacklog:
 
 
 def _rule_summary(state_dir: Path) -> str:
-    desc_path = state_dir / "rule_descriptions.json"
-    if desc_path.exists():
+    eval_path = state_dir / "rule_evaluation.json"
+    if eval_path.exists():
         try:
-            descs = RuleDescriptions.model_validate_json(desc_path.read_text(encoding="utf-8"))
-            return json.dumps([r.model_dump() for r in descs.rules], indent=2)
+            evaluation = RuleEvaluation.model_validate_json(eval_path.read_text(encoding="utf-8"))
+            return json.dumps(
+                [
+                    {
+                        "rule_id": r.rule_id,
+                        "description": r.description,
+                        "score": r.score,
+                        "status": r.status,
+                        "signal_count": r.signal_count,
+                    }
+                    for r in evaluation.rules
+                ],
+                indent=2,
+            )
         except Exception:
             pass
-    return ", ".join(fn.__module__.split(".")[-1] for fn in ACTIVE_RULES)
+    return "(no rule evaluation available)"
 
 
 def _open_ideas_summary(ideas: list[RuleIdea]) -> str:
     open_ideas = [i for i in ideas if i.status in ("proposed", "evaluated")]
     if not open_ideas:
         return "None"
-    return json.dumps([{"title": i.title, "description": i.description} for i in open_ideas], indent=2)
+    return json.dumps(
+        [{"title": i.title, "kind": i.kind, "target_rule": i.target_rule} for i in open_ideas],
+        indent=2,
+    )

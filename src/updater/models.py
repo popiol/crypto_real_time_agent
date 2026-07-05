@@ -7,10 +7,20 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+class PairMetrics(BaseModel):
+    pair: str
+    signal_count: int
+    avg_gain_pct: float
+    positive_rate: float
+
+
 class RuleSignalEvaluation(BaseModel):
     rule_id: str
     signal_count: int
-    notes: str  # LLM qualitative interpretation of this rule's signal outcomes
+    positive_rate: float
+    avg_gain_pct: float
+    by_exit_reason: dict[str, int]
+    by_pair: list[PairMetrics]
 
 
 class SignalEvaluation(BaseModel):
@@ -43,10 +53,13 @@ class RuleEvaluation(BaseModel):
     summary: str
 
 
+class Conclusion(BaseModel):
+    text: str
+    rule_ids: list[str]
+
+
 class Conclusions(BaseModel):
-    what_works: str
-    what_doesnt: str
-    open_questions: str
+    conclusions: list[Conclusion]
 
 
 class LongTermPlan(BaseModel):

@@ -44,8 +44,8 @@ def run(config: AppConfig, state_dir: Path) -> None:
             "Interpret rule performance data and derive actionable strategic conclusions."
         ),
         user=(
-            "Based on the following rule evaluations, derive strategic conclusions about "
-            "what kinds of signals work, what doesn't, and open questions.\n\n"
+            "Based on the following rule evaluations, derive a list of strategic conclusions. "
+            "Each conclusion should reference the specific rule(s) it applies to.\n\n"
             f"Rule evaluations:\n{rules_text}"
             f"{version_cmp_text}"
         ),
