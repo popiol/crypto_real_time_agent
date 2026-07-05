@@ -87,10 +87,10 @@ class RuleIdea(BaseModel):
     description: str
     rationale: str
     pseudocode: str
-    kind: Literal["new_rule", "modify_rule"]
-    target_rule: str | None
-    score: float | None
-    status: Literal["proposed", "evaluated", "implemented", "rejected"]
+    kind: Literal["new_rule", "modify_rule"] = "new_rule"
+    target_rule: str | None = None
+    score: float | None = None
+    status: Literal["proposed", "evaluated", "implemented", "rejected"] = "proposed"
 
 
 class IdeaBacklog(BaseModel):
