@@ -20,7 +20,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "fft_cycle_trough"
+RULE_ID = "rule_05_fft_cycle_v1"
 
 # Minimum warm candles; fewer than half a 24-hour window is not enough for cycle detection
 MIN_CANDLES = 12

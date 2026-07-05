@@ -17,7 +17,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "arima_price_forecast"
+RULE_ID = "rule_04_arima_forecast_v1"
 
 # Minimum warm candles needed for a reliable fit
 MIN_CANDLES = 10

@@ -6,6 +6,7 @@ Writes conclusions.json.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -26,6 +27,8 @@ def run(config: AppConfig, state_dir: Path) -> None:
         rule_eval_path.read_text(encoding="utf-8")
     )
 
+    rules_text = json.dumps([r.model_dump() for r in rule_eval.rules], indent=2)
+
     version_cmp_text = ""
     version_cmp_path = state_dir / "version_comparison.json"
     if version_cmp_path.exists():
@@ -43,7 +46,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         user=(
             "Based on the following rule evaluations, derive strategic conclusions about "
             "what kinds of signals work, what doesn't, and open questions.\n\n"
-            f"Rule evaluations:\n{rule_eval.model_dump_json(indent=2)}"
+            f"Rule evaluations:\n{rules_text}"
             f"{version_cmp_text}"
         ),
         output_type=Conclusions,

@@ -12,7 +12,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "spread_compression_spike"
+RULE_ID = "rule_01_spread_compression_v1"
 
 MIN_TICKS = 10
 THRESHOLD = 0.30

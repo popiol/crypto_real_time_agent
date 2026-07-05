@@ -23,7 +23,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "markov_transition"
+RULE_ID = "rule_09_markov_chain_v1"
 
 N_STATES = 3
 SIGNAL_THRESHOLD = 0.6      # P(move to higher state) must exceed this

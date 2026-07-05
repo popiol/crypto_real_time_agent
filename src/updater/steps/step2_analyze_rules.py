@@ -53,7 +53,8 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     scores: list[RuleScore] = []
     for rule_fn in ACTIVE_RULES:
-        module_rule_id = rule_fn.__module__.split(".")[-1]
+        parts = rule_fn.__module__.split(".")
+        module_rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
         signal_rule_id = _get_signal_rule_id(rule_fn)
         description = _describe(module_rule_id, rule_fn, desc_cache, config.llm_model)
         desc_cache[module_rule_id] = description

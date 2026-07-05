@@ -10,7 +10,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "bollinger_band_lower_touch"
+RULE_ID = "rule_02_bollinger_band_v1"
 
 K = 2.0
 MIN_CANDLES = 10

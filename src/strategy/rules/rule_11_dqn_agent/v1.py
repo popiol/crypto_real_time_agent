@@ -30,9 +30,9 @@ Each cycle:
      Confidence = σ(Q(s, chosen) − Q(s, hold))  ∈ (0, 1).
 
 State files:
-    data/rules/dqn/model.keras    Keras model file
-    data/rules/dqn/pending.ndjson pending experiences
-    data/rules/dqn/state.json     {"training_steps": N}
+    data/rules/rule_11_dqn_agent/model.keras    Keras model file
+    data/rules/rule_11_dqn_agent/pending.ndjson pending experiences
+    data/rules/rule_11_dqn_agent/state.json     {"training_steps": N}
 """
 
 from __future__ import annotations
@@ -54,7 +54,7 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 logger = logging.getLogger(__name__)
 
-RULE_ID = "dqn_buy_signal"
+RULE_ID = "rule_11_dqn_agent_v1"
 
 WINDOW_SIZE = 20  # warm candles per state
 N_FEATURES = 2  # (close_norm, roc) per candle
@@ -70,9 +70,9 @@ MIN_TRAINING_STEPS = 20
 RECORD_INTERVAL = timedelta(hours=1)
 SAVE_EVERY = 10
 
-_MODEL_PATH = Path("data") / "rules" / "dqn" / "model.keras"
-_PENDING_PATH = Path("data") / "rules" / "dqn" / "pending.ndjson"
-_STATE_PATH = Path("data") / "rules" / "dqn" / "state.json"
+_MODEL_PATH = Path("data") / "rules" / "rule_11_dqn_agent" / "model.keras"
+_PENDING_PATH = Path("data") / "rules" / "rule_11_dqn_agent" / "pending.ndjson"
+_STATE_PATH = Path("data") / "rules" / "rule_11_dqn_agent" / "state.json"
 
 MarketData = dict[str, PairData]
 
