@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "roc_momentum"
+RULE_ID = "rule_08_roc_momentum_v1"
 
 SHORT_WINDOW = 5                                          # ticks
 MEDIUM_WINDOW = 6                                         # hours

@@ -70,11 +70,12 @@ def run(config: AppConfig, state_dir: Path) -> None:
             )
         )
 
+    multi_version_count = sum(1 for v in by_base.values() if len(v) >= 2)
     total_dropped = sum(len(c.versions_to_drop) for c in comparisons)
     result = VersionComparisonResult(
         comparisons=comparisons,
         summary=(
-            f"Compared {len(by_base)} multi-version rules; "
+            f"Found {multi_version_count} multi-version rule(s); "
             f"marked {total_dropped} version(s) for dropping."
         ),
     )

@@ -16,14 +16,10 @@ Each cycle this rule does three things in order:
                       Inference is suppressed until MIN_TRAINING_STEPS have
                       accumulated so random-weight outputs are never acted on.
 
-No separate training script is needed. The model bootstraps itself from live
-data and improves continuously. Use src/strategy/train_cnn.py to pre-train
-from a historical dataset before going live.
-
 State files:
-    data/rules/cnn/model.keras    Keras model file
-    data/rules/cnn/pending.ndjson pending training records (one JSON line each)
-    data/rules/cnn/state.json     {"training_steps": N}
+    data/rules/rule_10_cnn_forecast/model.keras    Keras model file
+    data/rules/rule_10_cnn_forecast/pending.ndjson pending training records (one JSON line each)
+    data/rules/rule_10_cnn_forecast/state.json     {"training_steps": N}
 """
 
 from __future__ import annotations
@@ -43,20 +39,20 @@ os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 logger = logging.getLogger(__name__)
 
-RULE_ID = "cnn_price_forecast"
+RULE_ID = "rule_10_cnn_forecast_v1"
 
-WINDOW_SIZE = 20                        # warm candles per input window
-N_FEATURES = 2                          # features per candle: (close_norm, roc)
+WINDOW_SIZE = 20  # warm candles per input window
+N_FEATURES = 2  # features per candle: (close_norm, roc)
 FORECAST_HORIZON = timedelta(hours=24)
-GAIN_THRESHOLD = 0.01                   # ≥1% gain in 24 h → label 1
+GAIN_THRESHOLD = 0.01  # ≥1% gain in 24 h → label 1
 SIGNAL_THRESHOLD = 0.6
-MIN_TRAINING_STEPS = 10                 # suppress inference until this many steps done
-RECORD_INTERVAL = timedelta(hours=1)    # record at most once per pair per hour
-SAVE_EVERY = 10                         # persist model every N training steps
+MIN_TRAINING_STEPS = 10  # suppress inference until this many steps done
+RECORD_INTERVAL = timedelta(hours=1)  # record at most once per pair per hour
+SAVE_EVERY = 10  # persist model every N training steps
 
-_MODEL_PATH = Path("data") / "rules" / "cnn" / "model.keras"
-_PENDING_PATH = Path("data") / "rules" / "cnn" / "pending.ndjson"
-_STATE_PATH = Path("data") / "rules" / "cnn" / "state.json"
+_MODEL_PATH = Path("data") / "rules" / "rule_10_cnn_forecast" / "model.keras"
+_PENDING_PATH = Path("data") / "rules" / "rule_10_cnn_forecast" / "pending.ndjson"
+_STATE_PATH = Path("data") / "rules" / "rule_10_cnn_forecast" / "state.json"
 
 MarketData = dict[str, PairData]
 
@@ -68,17 +64,25 @@ _last_recorded: dict[str, datetime] = {}
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
+
 def _build_model():
     import tensorflow as tf
-    model = tf.keras.Sequential([
-        tf.keras.layers.Conv1D(32, kernel_size=3, activation="relu",
-                               input_shape=(WINDOW_SIZE, N_FEATURES)),
-        tf.keras.layers.Conv1D(64, kernel_size=3, activation="relu"),
-        tf.keras.layers.GlobalMaxPooling1D(),
-        tf.keras.layers.Dense(32, activation="relu"),
-        tf.keras.layers.Dropout(0.3),
-        tf.keras.layers.Dense(1, activation="sigmoid"),
-    ])
+
+    model = tf.keras.Sequential(
+        [
+            tf.keras.layers.Conv1D(
+                32,
+                kernel_size=3,
+                activation="relu",
+                input_shape=(WINDOW_SIZE, N_FEATURES),
+            ),
+            tf.keras.layers.Conv1D(64, kernel_size=3, activation="relu"),
+            tf.keras.layers.GlobalMaxPooling1D(),
+            tf.keras.layers.Dense(32, activation="relu"),
+            tf.keras.layers.Dropout(0.3),
+            tf.keras.layers.Dense(1, activation="sigmoid"),
+        ]
+    )
     model.compile(optimizer="adam", loss="binary_crossentropy")
     return model
 
@@ -95,7 +99,9 @@ def _load_model_and_state() -> None:
             logger.exception("Failed to load CNN model; starting fresh")
             _model = _build_model()
     else:
-        logger.info("No CNN model found at %s; initializing with random weights", _MODEL_PATH)
+        logger.info(
+            "No CNN model found at %s; initializing with random weights", _MODEL_PATH
+        )
         _model = _build_model()
 
     if _STATE_PATH.exists():
@@ -116,6 +122,7 @@ def _save_model_and_state() -> None:
 
 # ── Features ──────────────────────────────────────────────────────────────────
 
+
 def _features(candles: list[WarmCandle]) -> list[list[float]]:
     """Return (close_norm, roc) per candle; first candle gets roc = 0."""
     closes = [c.close for c in candles]
@@ -129,6 +136,7 @@ def _features(candles: list[WarmCandle]) -> list[list[float]]:
 
 
 # ── Pending records ───────────────────────────────────────────────────────────
+
 
 def _load_pending() -> list[dict]:
     if not _PENDING_PATH.exists():
@@ -153,7 +161,10 @@ def _save_pending(records: list[dict]) -> None:
 
 # ── Label + train ─────────────────────────────────────────────────────────────
 
-def _label_and_train(pending: list[dict], current_prices: dict[str, float]) -> list[dict]:
+
+def _label_and_train(
+    pending: list[dict], current_prices: dict[str, float]
+) -> list[dict]:
     """Label records old enough to have a known outcome; train one step each."""
     global _training_steps
     import numpy as np
@@ -174,7 +185,9 @@ def _label_and_train(pending: list[dict], current_prices: dict[str, float]) -> l
             remaining.append(rec)
             continue
 
-        label = 1.0 if current_prices[pair] > rec["price"] * (1 + GAIN_THRESHOLD) else 0.0
+        label = (
+            1.0 if current_prices[pair] > rec["price"] * (1 + GAIN_THRESHOLD) else 0.0
+        )
 
         X = np.array([rec["features"]], dtype=np.float32)
         y = np.array([label], dtype=np.float32)
@@ -189,6 +202,7 @@ def _label_and_train(pending: list[dict], current_prices: dict[str, float]) -> l
 
 # ── Record ────────────────────────────────────────────────────────────────────
 
+
 def _add_records(pending: list[dict], data: MarketData, now: datetime) -> list[dict]:
     """Append a pending record per pair, at most once per RECORD_INTERVAL."""
     for pair, pair_data in data.items():
@@ -199,21 +213,24 @@ def _add_records(pending: list[dict], data: MarketData, now: datetime) -> list[d
         if last is not None and now - last < RECORD_INTERVAL:
             continue
 
-        window = pair_data.warm[-(WINDOW_SIZE + 1):]
+        window = pair_data.warm[-(WINDOW_SIZE + 1) :]
         feats = _features(window)[-WINDOW_SIZE:]
 
-        pending.append({
-            "pair": pair,
-            "recorded_at": now.isoformat(),
-            "price": pair_data.hot[-1].last_price,
-            "features": feats,
-        })
+        pending.append(
+            {
+                "pair": pair,
+                "recorded_at": now.isoformat(),
+                "price": pair_data.hot[-1].last_price,
+                "features": feats,
+            }
+        )
         _last_recorded[pair] = now
 
     return pending
 
 
 # ── Infer ─────────────────────────────────────────────────────────────────────
+
 
 def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
     if _training_steps < MIN_TRAINING_STEPS:
@@ -226,7 +243,7 @@ def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
         if len(pair_data.warm) < WINDOW_SIZE + 1 or not pair_data.hot:
             continue
 
-        window = pair_data.warm[-(WINDOW_SIZE + 1):]
+        window = pair_data.warm[-(WINDOW_SIZE + 1) :]
         feats = _features(window)[-WINDOW_SIZE:]
         x = tf.constant([feats], dtype=tf.float32)
         prob = float(_model(x, training=False)[0, 0])
@@ -234,14 +251,31 @@ def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
         price = pair_data.hot[-1].last_price
 
         if prob > SIGNAL_THRESHOLD:
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price, confidence=prob))
+            signals.append(
+                BuySignal(
+                    pair=pair,
+                    rule_id=RULE_ID,
+                    timestamp=ts,
+                    price=price,
+                    confidence=prob,
+                )
+            )
         elif prob < 1 - SIGNAL_THRESHOLD:
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price, confidence=1 - prob))
+            signals.append(
+                SellSignal(
+                    pair=pair,
+                    rule_id=RULE_ID,
+                    timestamp=ts,
+                    price=price,
+                    confidence=1 - prob,
+                )
+            )
 
     return signals
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
+
 
 def cnn_price_forecast(data: MarketData) -> list[BuySignal | SellSignal]:
     if _model is None:

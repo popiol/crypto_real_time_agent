@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from src.agent.models import BuySignal, PairData, SellSignal, Tick
 
-RULE_ID = "order_book_imbalance"
+RULE_ID = "rule_07_order_book_imbalance_v1"
 
 MIN_TICKS = 10
 IMBALANCE_THRESHOLD = 0.3   # net buy-side fraction required

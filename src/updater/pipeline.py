@@ -13,6 +13,8 @@ Requires one of:
 from __future__ import annotations
 
 import logging
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -42,6 +44,17 @@ _STEPS: list[tuple[str, Callable]] = [
 ]
 
 
+_STATE_FILES = [
+    "signal_evaluation.json",
+    "rule_descriptions.json",
+    "rule_evaluation.json",
+    "version_comparison.json",
+    "conclusions.json",
+    "long_term_plan.json",
+    "idea_backlog.json",
+]
+
+
 def run(config: AppConfig) -> None:
     """Execute the full 8-step Strategy Updater pipeline."""
     state_dir = Path(config.state_dir)
@@ -55,3 +68,19 @@ def run(config: AppConfig) -> None:
         except Exception:
             logger.exception("Step %s failed; continuing with remaining steps", name)
     logger.info("Strategy Updater pipeline complete")
+
+    _archive_state(state_dir)
+
+
+def _archive_state(state_dir: Path) -> None:
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    history_dir = state_dir / "history" / ts
+    archived = 0
+    for name in _STATE_FILES:
+        src = state_dir / name
+        if src.exists():
+            history_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, history_dir / name)
+            archived += 1
+    if archived:
+        logger.info("Archived %d state file(s) to %s", archived, history_dir)

@@ -7,11 +7,14 @@ from typing import Literal
 from pydantic import BaseModel
 
 
+class RuleSignalEvaluation(BaseModel):
+    rule_id: str
+    signal_count: int
+    notes: str  # LLM qualitative interpretation of this rule's signal outcomes
+
+
 class SignalEvaluation(BaseModel):
-    overall_positive_rate: float
-    avg_gain_24h: float
-    avg_max_gain_24h: float
-    notes: str
+    rules: list[RuleSignalEvaluation]
 
 
 class RuleDescription(BaseModel):

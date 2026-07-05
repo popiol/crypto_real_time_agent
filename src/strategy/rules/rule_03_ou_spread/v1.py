@@ -16,7 +16,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "ou_spread_compression"
+RULE_ID = "rule_03_ou_spread_v1"
 
 # Minimum hot-tier ticks required for a reliable OU fit
 MIN_TICKS = 30

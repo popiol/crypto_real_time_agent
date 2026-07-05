@@ -25,7 +25,7 @@ import numpy as np
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "lead_lag_cross_asset"
+RULE_ID = "rule_12_lead_lag_v1"
 
 MIN_CANDLES = 20  # minimum warm candles per asset for reliable correlation
 MAX_LAG = 3  # maximum lead time in hours to consider

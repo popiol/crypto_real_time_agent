@@ -26,7 +26,7 @@ import statistics
 
 from src.agent.models import BuySignal, PairData, SellSignal
 
-RULE_ID = "kalman_velocity_reversal"
+RULE_ID = "rule_06_kalman_velocity_v1"
 
 MIN_TICKS = 30
 MIN_WARM_CANDLES = 5
