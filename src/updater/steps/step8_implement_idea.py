@@ -216,8 +216,13 @@ def _register_rule(strategy_path: Path, rule_id: str, function_name: str) -> Non
     else:
         content = import_line + "\n" + content
 
-    active_close = content.rfind("]", content.find("ACTIVE_RULES ="))
-    content = content[:active_close] + f"    {function_name},\n" + content[active_close:]
+    content = re.sub(
+        r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
+        rf"\1\2\n    {function_name},\3",
+        content,
+        count=1,
+        flags=re.DOTALL,
+    )
 
     strategy_path.write_text(content, encoding="utf-8")
     logger.info("Registered %s in strategy.py", function_name)
@@ -287,7 +292,7 @@ def _commit_and_push(rule_id: str, function_name: str) -> None:
     try:
         subprocess.run(["git", "add", "-A"], check=True)
         subprocess.run(["git", "commit", "-m", commit_msg], check=True)
-        subprocess.run(["git", "push"], check=True)
+        subprocess.run(["git", "push", "--set-upstream", "origin", "HEAD"], check=True)
         logger.info("Committed and pushed: %s", commit_msg)
     except subprocess.CalledProcessError:
         logger.exception("git commit/push failed after implementing %s", rule_id)
