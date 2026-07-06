@@ -94,7 +94,7 @@ def _run_kalman(prices: list[float]) -> list[float]:
     return velocities
 
 
-def kalman_velocity_reversal(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

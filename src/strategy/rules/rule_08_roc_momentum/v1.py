@@ -29,7 +29,7 @@ MIN_WARM_CANDLES = MEDIUM_WINDOW + REGIME_LOOKBACK + 1   # = 10
 MarketData = dict[str, PairData]
 
 
-def rate_of_change_momentum(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

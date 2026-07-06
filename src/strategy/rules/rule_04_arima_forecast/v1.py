@@ -88,7 +88,7 @@ def _forecast_std(phi: float, sigma: float, horizon: int) -> float:
     return sigma * math.sqrt(variance)
 
 
-def arima_price_forecast(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

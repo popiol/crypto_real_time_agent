@@ -10,7 +10,6 @@ Writes rule_evaluation.json (sole source of descriptions + scores).
 
 from __future__ import annotations
 
-import importlib
 import inspect
 import json
 import logging
@@ -48,11 +47,11 @@ def run(config: AppConfig, state_dir: Path) -> None:
     desc_cache: dict[str, str] = _load_desc_cache(state_dir / "rule_evaluation.json")
 
     scores: list[RuleScore] = []
-    for rule_fn in ACTIVE_RULES:
-        parts = rule_fn.__module__.split(".")
+    for rule_module in ACTIVE_RULES:
+        parts = rule_module.__name__.split(".")
         module_rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
-        signal_rule_id = _get_signal_rule_id(rule_fn)
-        description = _describe(module_rule_id, rule_fn, desc_cache, config.llm_model)
+        signal_rule_id = getattr(rule_module, "RULE_ID", module_rule_id)
+        description = _describe(module_rule_id, rule_module, desc_cache, config.llm_model)
         desc_cache[module_rule_id] = description
         scores.append(_score(module_rule_id, signal_rule_id, description, ledger_signals, config))
 
@@ -93,19 +92,11 @@ def _load_desc_cache(rule_eval_path: Path) -> dict[str, str]:
         return {}
 
 
-def _get_signal_rule_id(rule_fn) -> str:
-    try:
-        module = importlib.import_module(rule_fn.__module__)
-        return getattr(module, "RULE_ID", rule_fn.__name__)
-    except Exception:
-        return rule_fn.__name__
-
-
-def _describe(module_rule_id: str, rule_fn, cache: dict[str, str], model: str) -> str:
+def _describe(module_rule_id: str, rule_module, cache: dict[str, str], model: str) -> str:
     if module_rule_id in cache:
         return cache[module_rule_id]
     try:
-        source = inspect.getsource(rule_fn)
+        source = inspect.getsource(rule_module.signal)
     except Exception:
         source = f"# source unavailable for {module_rule_id}"
     try:

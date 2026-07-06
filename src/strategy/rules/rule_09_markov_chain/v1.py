@@ -67,7 +67,7 @@ def _transition_matrix(states: list[int]) -> list[list[float]]:
     return T
 
 
-def markov_chain_transition(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

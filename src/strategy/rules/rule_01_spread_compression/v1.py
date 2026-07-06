@@ -20,7 +20,7 @@ THRESHOLD = 0.30
 MarketData = dict[str, PairData]
 
 
-def spread_compression_spike(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

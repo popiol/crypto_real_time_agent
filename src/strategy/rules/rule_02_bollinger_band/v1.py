@@ -18,7 +18,7 @@ MIN_CANDLES = 10
 MarketData = dict[str, PairData]
 
 
-def bollinger_band_lower_touch(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

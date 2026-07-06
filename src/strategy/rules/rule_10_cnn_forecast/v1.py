@@ -277,7 +277,7 @@ def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 
-def cnn_price_forecast(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     if _model is None:
         _load_model_and_state()
 

@@ -56,7 +56,7 @@ def _dft(series: list[float]) -> list[complex]:
     ]
 
 
-def fft_cycle_trough(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

@@ -1,59 +1,58 @@
 """Strategy engine — signal detection.
 
-find_signals() is the only public entry point. It calls every registered
-rule function and merges the results.
+find_signals() is the only public entry point. It iterates ACTIVE_RULES and
+calls signal(data) on each rule module.
 
-To add a rule: create src/strategy/rules/<rule_name>/v1.py, import its
-function below, and append it to ACTIVE_RULES.
-To add a version: create v2.py in the existing rule's folder, import it,
-and append it alongside the prior version while it is being evaluated.
+To add a rule: create src/strategy/rules/<rule_name>/v1.py with a signal()
+function, then add an import and entry to ACTIVE_RULES below.
+To add a version: create v2.py alongside v1.py and add it to ACTIVE_RULES
+while it is being evaluated against the prior version.
 """
 
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Sequence
+from types import ModuleType
 
 from src.agent.models import BuySignal, PairData, SellSignal
-from src.strategy.rules.rule_01_spread_compression.v1 import spread_compression_spike
-from src.strategy.rules.rule_02_bollinger_band.v1 import bollinger_band_lower_touch
-from src.strategy.rules.rule_03_ou_spread.v1 import ou_spread_compression
-from src.strategy.rules.rule_04_arima_forecast.v1 import arima_price_forecast
-from src.strategy.rules.rule_05_fft_cycle.v1 import fft_cycle_trough
-from src.strategy.rules.rule_06_kalman_velocity.v1 import kalman_velocity_reversal
-from src.strategy.rules.rule_07_order_book_imbalance.v1 import order_book_imbalance
-from src.strategy.rules.rule_08_roc_momentum.v1 import rate_of_change_momentum
-from src.strategy.rules.rule_09_markov_chain.v1 import markov_chain_transition
-from src.strategy.rules.rule_10_cnn_forecast.v1 import cnn_price_forecast
-from src.strategy.rules.rule_11_dqn_agent.v1 import dqn_buy_signal
-from src.strategy.rules.rule_12_lead_lag.v1 import lead_lag_cross_asset
+
+import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
+import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
+import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
+import src.strategy.rules.rule_06_kalman_velocity.v1 as rule_06_kalman_velocity_v1
+import src.strategy.rules.rule_07_order_book_imbalance.v1 as rule_07_order_book_imbalance_v1
+import src.strategy.rules.rule_08_roc_momentum.v1 as rule_08_roc_momentum_v1
+import src.strategy.rules.rule_09_markov_chain.v1 as rule_09_markov_chain_v1
+import src.strategy.rules.rule_10_cnn_forecast.v1 as rule_10_cnn_forecast_v1
+import src.strategy.rules.rule_11_dqn_agent.v1 as rule_11_dqn_agent_v1
+import src.strategy.rules.rule_12_lead_lag.v1 as rule_12_lead_lag_v1
 
 MarketData = dict[str, PairData]
 Signal = BuySignal | SellSignal
-RuleFn = Callable[[MarketData], Sequence[Signal]]
 
-ACTIVE_RULES: list[RuleFn] = [
-    spread_compression_spike,
-    bollinger_band_lower_touch,
-    ou_spread_compression,
-    arima_price_forecast,
-    fft_cycle_trough,
-    kalman_velocity_reversal,
-    order_book_imbalance,
-    rate_of_change_momentum,
-    markov_chain_transition,
-    cnn_price_forecast,
-    dqn_buy_signal,
-    lead_lag_cross_asset,
+ACTIVE_RULES: list[ModuleType] = [
+    rule_01_spread_compression_v1,
+    rule_02_bollinger_band_v1,
+    rule_03_ou_spread_v1,
+    rule_04_arima_forecast_v1,
+    rule_05_fft_cycle_v1,
+    rule_06_kalman_velocity_v1,
+    rule_07_order_book_imbalance_v1,
+    rule_08_roc_momentum_v1,
+    rule_09_markov_chain_v1,
+    rule_10_cnn_forecast_v1,
+    rule_11_dqn_agent_v1,
+    rule_12_lead_lag_v1,
 ]
 
 
 def find_signals(data: MarketData) -> list[Signal]:
-    """Run all active rules against the current market data and return signals."""
     signals: list[Signal] = []
-    for rule_fn in ACTIVE_RULES:
+    for rule in ACTIVE_RULES:
         try:
-            signals.extend(rule_fn(data))
+            signals.extend(rule.signal(data))
         except Exception:  # noqa: BLE001
-            logging.exception("Rule %s raised an exception", rule_fn.__name__)
+            logging.exception("Rule %s raised an exception", rule.__name__)
     return signals
