@@ -14,8 +14,6 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
-from src.agent.models import BuySignal, PairData, SellSignal
-
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
@@ -28,6 +26,7 @@ import src.strategy.rules.rule_09_markov_chain.v1 as rule_09_markov_chain_v1
 import src.strategy.rules.rule_10_cnn_forecast.v1 as rule_10_cnn_forecast_v1
 import src.strategy.rules.rule_11_dqn_agent.v1 as rule_11_dqn_agent_v1
 import src.strategy.rules.rule_12_lead_lag.v1 as rule_12_lead_lag_v1
+from src.agent.models import BuySignal, PairData, SellSignal
 
 MarketData = dict[str, PairData]
 Signal = BuySignal | SellSignal
