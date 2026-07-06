@@ -17,8 +17,8 @@ from types import ModuleType
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
-import src.strategy.rules.rule_04_arima_forecast as rule_04_arima_forecast_v1
-import src.strategy.rules.rule_05_fft_cycle as rule_05_fft_cycle_v1
+import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
+import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
 import src.strategy.rules.rule_06_kalman_velocity.v1 as rule_06_kalman_velocity_v1
 import src.strategy.rules.rule_07_order_book_imbalance.v1 as rule_07_order_book_imbalance_v1
 import src.strategy.rules.rule_08_roc_momentum.v1 as rule_08_roc_momentum_v1
