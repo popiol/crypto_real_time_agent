@@ -17,17 +17,14 @@ from types import ModuleType
 from src.agent.models import BuySignal, PairData, SellSignal
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
-import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
-import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
 import src.strategy.rules.rule_06_kalman_velocity.v1 as rule_06_kalman_velocity_v1
 import src.strategy.rules.rule_07_order_book_imbalance.v1 as rule_07_order_book_imbalance_v1
 import src.strategy.rules.rule_08_roc_momentum.v1 as rule_08_roc_momentum_v1
-import src.strategy.rules.rule_09_markov_chain.v1 as rule_09_markov_chain_v1
 import src.strategy.rules.rule_10_cnn_forecast.v1 as rule_10_cnn_forecast_v1
 import src.strategy.rules.rule_11_dqn_agent.v1 as rule_11_dqn_agent_v1
-import src.strategy.rules.rule_12_lead_lag.v1 as rule_12_lead_lag_v1
 
 MarketData = dict[str, PairData]
 Signal = BuySignal | SellSignal
@@ -36,15 +33,12 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_01_spread_compression_v1,
     rule_02_bollinger_band_v1,
     rule_03_ou_spread_v1,
-    rule_04_arima_forecast_v1,
-    rule_05_fft_cycle_v1,
     rule_06_kalman_velocity_v1,
     rule_07_order_book_imbalance_v1,
     rule_08_roc_momentum_v1,
-    rule_09_markov_chain_v1,
     rule_10_cnn_forecast_v1,
     rule_11_dqn_agent_v1,
-    rule_12_lead_lag_v1,
+    rule_02_bollinger_band_v2,
 ]
 
 
