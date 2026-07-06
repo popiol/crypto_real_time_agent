@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-_MAX_TOKENS = 4096
+_MAX_TOKENS = 16384
 
 
 def make_llm(model: str) -> BaseChatModel:
