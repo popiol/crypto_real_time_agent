@@ -107,7 +107,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     # 6. Register in strategy.py
     try:
-        _register_rule(_STRATEGY_FILE, rule_id, implemented.function_name)
+        _register_rule(_STRATEGY_FILE, rule_id)
     except Exception:
         logger.exception("Failed to register %s in strategy.py", rule_id)
         rule_path.unlink(missing_ok=True)
@@ -178,8 +178,18 @@ def _rule_id_to_import_path(rule_id: str) -> str:
     return rule_id
 
 
+def _rule_id_to_function_name(rule_id: str) -> str:
+    """Derive a deterministic function name from the rule_id.
+
+    'rule_02_bollinger_band_v2' → 'bollinger_band_v2'
+    """
+    m = re.match(r"^rule_\d+_(.+)$", rule_id)
+    return m.group(1) if m else rule_id
+
+
 def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
     """Generate rule code as plain text to avoid JSON string-length limits in structured output."""
+    function_name = _rule_id_to_function_name(rule_id)
     llm = make_llm(model)
     user_prompt = (
         f"Implement this trading rule idea as a Python module.\n\n"
@@ -189,27 +199,21 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
         "Requirements:\n"
         f"1. Set RULE_ID = \"{rule_id}\" exactly.\n"
         "2. Define MarketData = dict[str, PairData].\n"
-        "3. Implement one public function with signature "
-        "   def <func>(data: MarketData) -> list[BuySignal | SellSignal].\n"
-        "4. Import only: standard library, numpy, scipy, statistics, "
+        f"3. The public entry-point function MUST be named exactly `{function_name}` "
+        f"   with signature: def {function_name}(data: MarketData) -> list[BuySignal | SellSignal].\n"
+        "4. Private helpers must be prefixed with underscore.\n"
+        "5. Import only: standard library, numpy, scipy, statistics, "
         "   src.agent.models.\n"
-        "5. Handle insufficient data gracefully (return []).\n"
-        "6. Return ONLY the raw Python source code — no markdown fences, no explanation."
+        "6. Handle insufficient data gracefully (return []).\n"
+        "7. Return ONLY the raw Python source code — no markdown fences, no explanation."
     )
     response = llm.invoke([SystemMessage(content=_IMPLEMENT_SYSTEM), HumanMessage(content=user_prompt)])
     raw = response.content
     code = (raw if isinstance(raw, str) else "".join(p if isinstance(p, str) else p.get("text", "") for p in raw)).strip()
 
-    # Strip accidental markdown fences
     if code.startswith("```"):
         code = re.sub(r"^```[a-z]*\n?", "", code)
         code = re.sub(r"\n?```$", "", code)
-
-    # Extract function name from the generated code
-    m = re.search(r"^def (\w+)\(data:", code, re.MULTILINE)
-    if not m:
-        raise ValueError(f"Could not find public function in generated code for {rule_id}")
-    function_name = m.group(1)
 
     return ImplementedRule(
         idea_id=idea.idea_id,
@@ -219,32 +223,30 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
     )
 
 
-def _register_rule(strategy_path: Path, rule_id: str, function_name: str) -> None:
+def _register_rule(strategy_path: Path, rule_id: str) -> None:
     """Add import and ACTIVE_RULES entry for the new rule version."""
     content = strategy_path.read_text(encoding="utf-8")
     import_path = _rule_id_to_import_path(rule_id)
-    import_line = f"from src.strategy.rules.{import_path} import {function_name}"
+    import_line = f"import src.strategy.rules.{import_path} as {rule_id}"
 
     last_import = re.search(
-        r"^from src\.strategy\.rules\.\S+ import \S+$", content, re.MULTILINE
+        r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
     )
     if last_import:
-        content = (
-            content[: last_import.end()] + "\n" + import_line + content[last_import.end():]
-        )
+        content = content[: last_import.end()] + "\n" + import_line + content[last_import.end():]
     else:
         content = import_line + "\n" + content
 
     content = re.sub(
         r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
-        rf"\1\2\n    {function_name},\3",
+        rf"\1\2\n    {rule_id},\3",
         content,
         count=1,
         flags=re.DOTALL,
     )
 
     strategy_path.write_text(content, encoding="utf-8")
-    logger.info("Registered %s in strategy.py", function_name)
+    logger.info("Registered %s in strategy.py", rule_id)
 
 
 def _unregister_dropped(state_dir: Path) -> None:
@@ -279,29 +281,20 @@ def _unregister_dropped(state_dir: Path) -> None:
         return
 
     for rule_id in set(to_remove):
-        fn_name = _get_function_name(strategy_path, rule_id)
-        if fn_name is None:
+        if f" as {rule_id}" not in strategy_path.read_text(encoding="utf-8"):
             logger.info("Rule %s not found in strategy.py; skipping", rule_id)
             continue
-        _unregister_rule(strategy_path, fn_name)
-        logger.info("Unregistered %s (%s) from strategy.py", rule_id, fn_name)
+        _unregister_rule(strategy_path, rule_id)
+        logger.info("Unregistered %s from strategy.py", rule_id)
 
 
-def _get_function_name(strategy_path: Path, rule_id: str) -> str | None:
-    """Find the function name imported for the given versioned rule_id."""
-    import_path = re.escape(_rule_id_to_import_path(rule_id))
-    content = strategy_path.read_text(encoding="utf-8")
-    m = re.search(rf"from src\.strategy\.rules\.{import_path} import (\w+)", content)
-    return m.group(1) if m else None
-
-
-def _unregister_rule(strategy_path: Path, function_name: str) -> None:
+def _unregister_rule(strategy_path: Path, rule_id: str) -> None:
     lines = strategy_path.read_text(encoding="utf-8").splitlines(keepends=True)
     filtered = [
         line
         for line in lines
-        if f"import {function_name}" not in line
-        and not re.fullmatch(rf"\s+{re.escape(function_name)},?\n?", line)
+        if f" as {rule_id}" not in line
+        and not re.fullmatch(rf"\s+{re.escape(rule_id)},?\n?", line)
     ]
     strategy_path.write_text("".join(filtered), encoding="utf-8")
 

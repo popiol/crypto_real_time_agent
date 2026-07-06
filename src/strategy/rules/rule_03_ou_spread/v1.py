@@ -77,7 +77,7 @@ def _slope(series: list[float]) -> float:
     return num / den if den else 0.0
 
 
-def ou_spread_compression(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():

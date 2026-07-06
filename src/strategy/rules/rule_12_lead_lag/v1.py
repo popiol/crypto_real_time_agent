@@ -110,7 +110,7 @@ def _get_pairs(data: MarketData) -> list[tuple[str, str, int, float]]:
 # ── Signal generation ─────────────────────────────────────────────────────────
 
 
-def lead_lag_cross_asset(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     pairs = _get_pairs(data)
     if not pairs:
         return []

@@ -39,7 +39,7 @@ def _imbalance(tick: Tick) -> float | None:
     return (bid_vol - ask_vol) / total
 
 
-def order_book_imbalance(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
