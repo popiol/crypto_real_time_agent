@@ -9,14 +9,16 @@ Runs continuously:
 
 from __future__ import annotations
 
+import importlib
 import logging
+import sys
 import time
 import uuid
 
 from src.agent import collector, storage
 from src.agent.db import open_db
 from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
-from src.strategy.strategy import find_signals
+import src.strategy.strategy as _strategy
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,8 @@ def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellS
             )
             for tick in ticks
         }
-        signals = list(find_signals(market_data))
+        importlib.reload(sys.modules["src.strategy.strategy"])
+        signals = list(_strategy.find_signals(market_data))
         volume_usd = {t.pair: t.volume_24h * t.last_price for t in ticks}
         return [
             s for s in signals

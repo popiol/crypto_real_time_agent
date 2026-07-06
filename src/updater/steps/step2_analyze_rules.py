@@ -17,9 +17,11 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+import importlib
+import sys
+
 from src.agent import storage
 from src.agent.models import AppConfig
-from src.strategy.strategy import ACTIVE_RULES
 from src.updater.llm import llm_structured
 from src.updater.models import RuleEvaluation, RuleScore
 
@@ -41,6 +43,11 @@ class _RuleDesc(BaseModel):
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
+    strategy = sys.modules.get("src.strategy.strategy")
+    if strategy is not None:
+        importlib.reload(strategy)
+    from src.strategy.strategy import ACTIVE_RULES
+
     ledger_signals = storage.read_signals(config)
 
     # Load description cache from the prior run's rule_evaluation.json
