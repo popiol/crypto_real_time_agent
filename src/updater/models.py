@@ -40,6 +40,7 @@ class RuleScore(BaseModel):
     rule_id: str
     description: str
     signal_count: int
+    evaluation_days: int
     avg_gain_pct: float
     positive_rate: float
     avg_gain_24h: float

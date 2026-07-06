@@ -95,4 +95,6 @@ class AppConfig(BaseModel):
     backoff_max_seconds: float = 60.0
     llm_model: str = "gemini-2.0-flash"
     rule_min_signals: int = 20
-    rule_deprecation_threshold: float = 0.3
+    rule_mature_days: int = 7              # evaluation days before "mature" logic applies
+    rule_early_deprecation_gain: float = -0.10  # deprecate immediately below this avg gain (ratio)
+    rule_mature_deprecation_gain: float = 0.0   # deprecate mature rule at or below this avg gain

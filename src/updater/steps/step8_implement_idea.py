@@ -285,7 +285,8 @@ def _unregister_dropped(state_dir: Path) -> None:
             logger.info("Rule %s not found in strategy.py; skipping", rule_id)
             continue
         _unregister_rule(strategy_path, rule_id)
-        logger.info("Unregistered %s from strategy.py", rule_id)
+        _remove_from_rule_evaluation(state_dir, rule_id)
+        logger.info("Unregistered %s from strategy.py and rule_evaluation.json", rule_id)
 
 
 def _unregister_rule(strategy_path: Path, rule_id: str) -> None:
@@ -297,6 +298,18 @@ def _unregister_rule(strategy_path: Path, rule_id: str) -> None:
         and not re.fullmatch(rf"\s+{re.escape(rule_id)},?\n?", line)
     ]
     strategy_path.write_text("".join(filtered), encoding="utf-8")
+
+
+def _remove_from_rule_evaluation(state_dir: Path, rule_id: str) -> None:
+    rule_eval_path = state_dir / "rule_evaluation.json"
+    if not rule_eval_path.exists():
+        return
+    try:
+        evaluation = RuleEvaluation.model_validate_json(rule_eval_path.read_text(encoding="utf-8"))
+        evaluation.rules = [r for r in evaluation.rules if r.rule_id != rule_id]
+        rule_eval_path.write_text(evaluation.model_dump_json(indent=2), encoding="utf-8")
+    except Exception:
+        logger.warning("Could not update rule_evaluation.json after unregistering %s", rule_id)
 
 
 def _commit_and_push(rule_id: str, function_name: str) -> None:

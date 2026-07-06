@@ -130,6 +130,7 @@ def _score(
             rule_id=module_rule_id,
             description=description,
             signal_count=0,
+            evaluation_days=0,
             avg_gain_pct=0.0,
             positive_rate=0.0,
             avg_gain_24h=0.0,
@@ -146,23 +147,43 @@ def _score(
     avg_gain_24h = sum(o["gain_24h_pct"] for o in with_24h) / len(with_24h) if with_24h else 0.0
     max_gain_24h = max(o["max_gain_24h_pct"] for o in with_24h) if with_24h else 0.0
 
-    composite = round(0.6 * positive_rate + 0.4 * min(1.0, max(0.0, avg_gain_pct / 5.0)), 4)
+    # Evaluation span in days (from first to last evaluated signal)
+    timestamps = [s["emitted_at"] for s in matching if s.get("emitted_at")]
+    evaluation_days = 0
+    if len(timestamps) >= 2:
+        from datetime import datetime
+        def _parse(ts) -> datetime:
+            if isinstance(ts, datetime):
+                return ts
+            return datetime.fromisoformat(str(ts))
+        evaluation_days = (_parse(max(timestamps)) - _parse(min(timestamps))).days
 
+    # Score: avg_gain_pct normalised to [0,1] where 0 = -10%, 0.5 = 0%, 1.0 = +10%
+    score = round(max(0.0, min(1.0, (avg_gain_pct + 0.10) / 0.20)), 4)
+
+    # Deprecation: time-aware
+    # - candidate  : not enough signals yet
+    # - short eval : deprecate only on severe loss (< rule_early_deprecation_gain)
+    # - mature eval : deprecate on zero or below-zero avg gain
+    mature = evaluation_days >= config.rule_mature_days
     if signal_count < config.rule_min_signals:
         status = "candidate"
-    elif composite >= config.rule_deprecation_threshold:
-        status = "active"
-    else:
+    elif mature and avg_gain_pct <= config.rule_mature_deprecation_gain:
         status = "deprecate"
+    elif not mature and avg_gain_pct < config.rule_early_deprecation_gain:
+        status = "deprecate"
+    else:
+        status = "active"
 
     return RuleScore(
         rule_id=module_rule_id,
         description=description,
         signal_count=signal_count,
+        evaluation_days=evaluation_days,
         avg_gain_pct=avg_gain_pct,
         positive_rate=positive_rate,
         avg_gain_24h=avg_gain_24h,
         max_gain_24h=max_gain_24h,
-        score=composite,
+        score=score,
         status=status,
     )
