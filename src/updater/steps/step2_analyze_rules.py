@@ -56,11 +56,10 @@ def run(config: AppConfig, state_dir: Path) -> None:
     scores: list[RuleScore] = []
     for rule_module in ACTIVE_RULES:
         parts = rule_module.__name__.split(".")
-        module_rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
-        signal_rule_id = getattr(rule_module, "RULE_ID", module_rule_id)
-        description = _describe(module_rule_id, rule_module, desc_cache, config.llm_model)
-        desc_cache[module_rule_id] = description
-        scores.append(_score(module_rule_id, signal_rule_id, description, ledger_signals, config))
+        rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
+        description = _describe(rule_id, rule_module, desc_cache, config.llm_model)
+        desc_cache[rule_id] = description
+        scores.append(_score(rule_id, description, ledger_signals, config))
 
     try:
         summary_result = llm_structured(
@@ -99,42 +98,41 @@ def _load_desc_cache(rule_eval_path: Path) -> dict[str, str]:
         return {}
 
 
-def _describe(module_rule_id: str, rule_module, cache: dict[str, str], model: str) -> str:
-    if module_rule_id in cache:
-        return cache[module_rule_id]
+def _describe(rule_id: str, rule_module, cache: dict[str, str], model: str) -> str:
+    if rule_id in cache:
+        return cache[rule_id]
     try:
         source = inspect.getsource(rule_module.signal)
     except Exception:
-        source = f"# source unavailable for {module_rule_id}"
+        source = f"# source unavailable for {rule_id}"
     try:
         result = llm_structured(
             model=model,
             system=_DESCRIBE_SYSTEM,
-            user=f"Rule ID: {module_rule_id}\n\nSource:\n{source}",
+            user=f"Rule ID: {rule_id}\n\nSource:\n{source}",
             output_type=_RuleDesc,
         )
         return result.description
     except Exception:
-        logger.warning("LLM description failed for %s", module_rule_id, exc_info=True)
-        return f"No description available for {module_rule_id}."
+        logger.warning("LLM description failed for %s", rule_id, exc_info=True)
+        return f"No description available for {rule_id}."
 
 
 def _score(
-    module_rule_id: str,
-    signal_rule_id: str,
+    rule_id: str,
     description: str,
     ledger_signals: list[dict],
     config: AppConfig,
 ) -> RuleScore:
     matching = [
         s for s in ledger_signals
-        if s.get("rule_id") == signal_rule_id and s.get("outcome") is not None
+        if s.get("rule_id") == rule_id and s.get("outcome") is not None
     ]
     signal_count = len(matching)
 
     if signal_count == 0:
         return RuleScore(
-            rule_id=module_rule_id,
+            rule_id=rule_id,
             description=description,
             signal_count=0,
             evaluation_days=0,
@@ -183,7 +181,7 @@ def _score(
         status = "active"
 
     return RuleScore(
-        rule_id=module_rule_id,
+        rule_id=rule_id,
         description=description,
         signal_count=signal_count,
         evaluation_days=evaluation_days,

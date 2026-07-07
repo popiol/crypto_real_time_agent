@@ -24,9 +24,8 @@ from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_06_kalman_velocity_v1"
 
 MIN_TICKS = 30
 MIN_WARM_CANDLES = 5
@@ -39,7 +38,6 @@ _Q_P = 1e-4   # process noise on price position
 _Q_V = 1e-2   # process noise on velocity (allows velocity to shift)
 _R = 1.0      # measurement noise variance (tick price noise)
 
-MarketData = dict[str, PairData]
 
 
 def _run_kalman(prices: list[float]) -> list[float]:
@@ -113,8 +111,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         ts = ticks[-1].polled_at
 
         if current_velocity > 0 and min(recent_prior) < 0 and current_price < warm_mean:
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=current_price))
         elif current_velocity < 0 and max(recent_prior) > 0 and current_price > warm_mean:
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=current_price))
 
     return signals

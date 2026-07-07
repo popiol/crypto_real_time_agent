@@ -8,14 +8,12 @@ from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_02_bollinger_band_v1"
 
 K = 2.0
 MIN_CANDLES = 10
 
-MarketData = dict[str, PairData]
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
@@ -36,8 +34,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         ts = pair_data.hot[-1].polled_at
 
         if current_price < mean - K * std:
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=current_price))
         elif current_price > mean + K * std:
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=current_price))
 
     return signals

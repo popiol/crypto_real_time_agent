@@ -15,9 +15,8 @@ from __future__ import annotations
 import math
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_04_arima_forecast_v1"
 
 # Minimum warm candles needed for a reliable fit
 MIN_CANDLES = 10
@@ -28,7 +27,6 @@ FORECAST_HORIZON = 3
 # Signal fires when forecast exceeds current price by > this many forecast std devs
 SIGNAL_THRESHOLD = 1.5
 
-MarketData = dict[str, PairData]
 
 
 def _fit_arima110(prices: list[float]) -> tuple[float, float, float]:
@@ -111,8 +109,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 
         deviation = (forecast_price - current_price) / std
         if deviation > SIGNAL_THRESHOLD:
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=current_price))
         elif deviation < -SIGNAL_THRESHOLD:
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=current_price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=current_price))
 
     return signals

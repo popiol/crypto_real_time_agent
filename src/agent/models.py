@@ -68,19 +68,22 @@ class PairData(BaseModel):
     cold: list[ColdMonth] = []
 
 
+MarketData = dict[str, PairData]
+
+
 class BuySignal(BaseModel):
     pair: str
-    rule_id: str
     timestamp: datetime
     price: float
+    rule_id: str = ""
     confidence: float | None = None
 
 
 class SellSignal(BaseModel):
     pair: str
-    rule_id: str
     timestamp: datetime
     price: float
+    rule_id: str = ""
     confidence: float | None = None
 
 

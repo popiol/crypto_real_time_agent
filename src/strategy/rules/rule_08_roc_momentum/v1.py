@@ -16,9 +16,8 @@ REGIME_LOOKBACK medium-term ROC values had the opposite sign.
 
 from __future__ import annotations
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_08_roc_momentum_v1"
 
 SHORT_WINDOW = 5                                          # ticks
 MEDIUM_WINDOW = 6                                         # hours
@@ -26,7 +25,6 @@ REGIME_LOOKBACK = 3                                       # prior medium ROC val
 MIN_TICKS = 2 * SHORT_WINDOW + 1                          # need two full short windows
 MIN_WARM_CANDLES = MEDIUM_WINDOW + REGIME_LOOKBACK + 1   # = 10
 
-MarketData = dict[str, PairData]
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
@@ -52,8 +50,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         price = prices[-1]
 
         if roc_now > 0 and roc_now > roc_prev and roc_medium_now > 0 and any(r <= 0 for r in prior_rocs):
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=price))
         elif roc_now < 0 and roc_now < roc_prev and roc_medium_now < 0 and any(r >= 0 for r in prior_rocs):
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=price))
 
     return signals
