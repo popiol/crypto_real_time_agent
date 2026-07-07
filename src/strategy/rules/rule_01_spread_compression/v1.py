@@ -10,14 +10,12 @@ from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_01_spread_compression_v1"
 
 MIN_TICKS = 10
 THRESHOLD = 0.30
 
-MarketData = dict[str, PairData]
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
@@ -39,8 +37,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         price = ticks[-1].last_price
 
         if current < baseline * (1 - THRESHOLD):
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=price))
         elif current > baseline * (1 + THRESHOLD):
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=price))
 
     return signals

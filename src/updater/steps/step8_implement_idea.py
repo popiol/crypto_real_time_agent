@@ -21,8 +21,11 @@ import logging
 import re
 import subprocess
 from pathlib import Path
+from typing import Literal
 
+from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
+from pydantic import BaseModel
 
 from src.agent.models import AppConfig
 from src.updater.llm import make_llm
@@ -44,18 +47,21 @@ _IMPLEMENT_SYSTEM = (
     "Generate a complete, self-contained Python module that implements the described rule."
 )
 
+_FIX_SYSTEM = (
+    "You are an expert Python developer. You will be given a Python module with a syntax error. "
+    "Return a minimal set of changes to fix the error. Do not rewrite the whole file."
+)
+
 _REFERENCE_RULE = """\
 \"\"\"Rule 01 — Spread compression spike (v1).\"\"\"
 from __future__ import annotations
 import statistics
-from src.agent.models import BuySignal, SellSignal, PairData
+from src.agent.models import BuySignal, MarketData, SellSignal
 
-RULE_ID = "rule_01_spread_compression_v1"
 MIN_TICKS = 10
 COMPRESSION_THRESHOLD = 0.30
-MarketData = dict[str, PairData]
 
-def spread_compression_spike(data: MarketData) -> list[BuySignal | SellSignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
     for pair, pair_data in data.items():
         ticks = pair_data.hot
@@ -66,11 +72,34 @@ def spread_compression_spike(data: MarketData) -> list[BuySignal | SellSignal]:
         current = spreads[-1]
         if baseline > 0 and current < baseline * (1 - COMPRESSION_THRESHOLD):
             signals.append(BuySignal(
-                pair=pair, rule_id=RULE_ID,
-                timestamp=ticks[-1].polled_at, price=ticks[-1].last_price,
+                pair=pair,
+                timestamp=ticks[-1].polled_at,
+                price=ticks[-1].last_price,
+            ))
+        elif baseline > 0 and current > baseline * (1 + COMPRESSION_THRESHOLD):
+            signals.append(SellSignal(
+                pair=pair,
+                timestamp=ticks[-1].polled_at,
+                price=ticks[-1].last_price,
             ))
     return signals
 """
+
+_MAX_FIX_ATTEMPTS = 10
+
+
+class _ImplementationFailed(Exception):
+    pass
+
+
+class _CodeChange(BaseModel):
+    action: Literal["add", "remove"]
+    line: int
+    code: str = ""
+
+
+class _CodeDiff(BaseModel):
+    changes: list[_CodeChange]
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
@@ -93,9 +122,17 @@ def run(config: AppConfig, state_dir: Path) -> None:
     # 3. Determine target file path and versioned rule_id
     rule_id, rule_path = _next_rule_path(idea)
 
-    # 4. Generate code
+    # 4. Generate and validate code
     try:
         implemented = _generate_code(idea, rule_id, config.llm_model)
+    except _ImplementationFailed as exc:
+        logger.warning("Rejecting idea %s: %s", idea.idea_id, exc)
+        for i in backlog.ideas:
+            if i.idea_id == idea.idea_id:
+                i.status = "rejected"
+                break
+        backlog_path.write_text(backlog.model_dump_json(indent=2), encoding="utf-8")
+        return
     except Exception:
         logger.exception("Code generation failed for idea %s", idea.idea_id)
         return
@@ -122,7 +159,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     logger.info(
         "Implemented idea '%s' as %s (%s)",
-        idea.title, rule_id, implemented.function_name,
+        idea.title,
+        rule_id,
+        implemented.function_name,
     )
 
     # 8. Commit and push all changes
@@ -178,47 +217,134 @@ def _rule_id_to_import_path(rule_id: str) -> str:
     return rule_id
 
 
-def _rule_id_to_function_name(rule_id: str) -> str:
-    """Derive a deterministic function name from the rule_id.
+def _check_syntax(code: str) -> str | None:
+    """Return a syntax-error description, or None if the code is valid."""
+    try:
+        compile(code, "<generated>", "exec")
+        return None
+    except SyntaxError as exc:
+        return f"SyntaxError at line {exc.lineno}: {exc.msg}"
 
-    'rule_02_bollinger_band_v2' → 'bollinger_band_v2'
-    """
-    m = re.match(r"^rule_\d+_(.+)$", rule_id)
-    return m.group(1) if m else rule_id
+
+def _apply_changes(code: str, changes: list[_CodeChange]) -> str:
+    """Apply a list of line-level changes to code, returning the updated source."""
+    lines = code.splitlines()
+    # Process from bottom to top (highest line first) so earlier indices stay valid.
+    # For equal line numbers, process removes before adds.
+    for change in sorted(
+        changes, key=lambda c: (c.line, c.action == "add"), reverse=True
+    ):
+        if change.action == "remove":
+            idx = change.line - 1
+            if 0 <= idx < len(lines):
+                lines.pop(idx)
+        elif change.action == "add":
+            new_lines = change.code.splitlines() if change.code else []
+            insert_at = (
+                change.line
+            )  # insert after line N → position N in 0-indexed list
+            lines[insert_at:insert_at] = new_lines
+    return "\n".join(lines)
 
 
-def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
-    """Generate rule code as plain text to avoid JSON string-length limits in structured output."""
-    function_name = _rule_id_to_function_name(rule_id)
-    llm = make_llm(model)
+def _load_target_source(target_rule: str) -> str | None:
+    """Return the source of the rule being modified, or None if unavailable."""
+    m = re.match(r"^(.+)_(v\d+)$", target_rule)
+    if not m:
+        return None
+    path = _RULES_DIR / m.group(1) / f"{m.group(2)}.py"
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+
+def _initial_code(idea: RuleIdea, llm: BaseChatModel) -> str:
+    """First-pass code generation via plain-text LLM call."""
+    existing_source = (
+        _load_target_source(idea.target_rule)
+        if idea.kind == "modify_rule" and idea.target_rule
+        else None
+    )
+    existing_section = (
+        f"Existing implementation to improve upon:\n{existing_source}\n\n"
+        if existing_source
+        else ""
+    )
     user_prompt = (
         f"Implement this trading rule idea as a Python module.\n\n"
         f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
-        f"Rule ID: {rule_id}\n\n"
+        f"{existing_section}"
         f"Reference rule structure to follow exactly:\n{_REFERENCE_RULE}\n\n"
         "Requirements:\n"
-        f"1. Set RULE_ID = \"{rule_id}\" exactly.\n"
-        "2. Define MarketData = dict[str, PairData].\n"
-        f"3. The public entry-point function MUST be named exactly `{function_name}` "
-        f"   with signature: def {function_name}(data: MarketData) -> list[BuySignal | SellSignal].\n"
-        "4. Private helpers must be prefixed with underscore.\n"
-        "5. Import only: standard library, numpy, scipy, statistics, "
-        "   src.agent.models.\n"
-        "6. Handle insufficient data gracefully (return []).\n"
-        "7. Return ONLY the raw Python source code — no markdown fences, no explanation."
+        "1. The public entry-point function MUST be named exactly `signal` "
+        "   with signature: def signal(data: MarketData) -> list[BuySignal | SellSignal].\n"
+        "2. Available external packages: numpy, tensorflow, keras.\n"
+        "3. Handle insufficient data gracefully (return [])."
     )
-    response = llm.invoke([SystemMessage(content=_IMPLEMENT_SYSTEM), HumanMessage(content=user_prompt)])
+    response = llm.invoke(
+        [SystemMessage(content=_IMPLEMENT_SYSTEM), HumanMessage(content=user_prompt)]
+    )
     raw = response.content
-    code = (raw if isinstance(raw, str) else "".join(p if isinstance(p, str) else p.get("text", "") for p in raw)).strip()
-
+    code = (
+        raw
+        if isinstance(raw, str)
+        else "".join(p if isinstance(p, str) else p.get("text", "") for p in raw)
+    ).strip()
     if code.startswith("```"):
         code = re.sub(r"^```[a-z]*\n?", "", code)
         code = re.sub(r"\n?```$", "", code)
+    return code
+
+
+def _fix_with_diff(code: str, error: str, idea: RuleIdea, llm: BaseChatModel) -> str:
+    """Ask the LLM for a diff to fix `error` in `code`, then apply it."""
+    structured = llm.with_structured_output(_CodeDiff)
+    user_prompt = (
+        f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
+        "Entry-point function name: signal\n\n"
+        f"Current code:\n{code}\n\n"
+        f"Syntax error to fix: {error}"
+    )
+    try:
+        result = structured.invoke(
+            [
+                SystemMessage(content=_FIX_SYSTEM),
+                HumanMessage(content=user_prompt),
+            ]
+        )
+        if not isinstance(result, _CodeDiff):
+            raise TypeError(f"Expected _CodeDiff, got {type(result).__name__}")
+        return _apply_changes(code, result.changes)
+    except Exception:
+        logger.warning("Diff generation failed; code unchanged", exc_info=True)
+        return code
+
+
+def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
+    llm = make_llm(model)
+
+    code = _initial_code(idea, llm)
+
+    for attempt in range(_MAX_FIX_ATTEMPTS):
+        error = _check_syntax(code)
+        if error is None:
+            break
+        logger.warning(
+            "Syntax error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
+        )
+        code = _fix_with_diff(code, error, idea, llm)
+    else:
+        error = _check_syntax(code)
+        if error is not None:
+            raise _ImplementationFailed(
+                f"Code still has syntax errors after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
+            )
 
     return ImplementedRule(
         idea_id=idea.idea_id,
         rule_id=rule_id,
-        function_name=function_name,
+        function_name="signal",
         code=code,
     )
 
@@ -233,7 +359,12 @@ def _register_rule(strategy_path: Path, rule_id: str) -> None:
         r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
     )
     if last_import:
-        content = content[: last_import.end()] + "\n" + import_line + content[last_import.end():]
+        content = (
+            content[: last_import.end()]
+            + "\n"
+            + import_line
+            + content[last_import.end() :]
+        )
     else:
         content = import_line + "\n" + content
 
@@ -258,7 +389,9 @@ def _unregister_dropped(state_dir: Path) -> None:
             evaluation = RuleEvaluation.model_validate_json(
                 rule_eval_path.read_text(encoding="utf-8")
             )
-            to_remove += [r.rule_id for r in evaluation.rules if r.status == "deprecate"]
+            to_remove += [
+                r.rule_id for r in evaluation.rules if r.status == "deprecate"
+            ]
         except Exception:
             logger.warning("Could not read rule_evaluation.json for unregistration")
 
@@ -286,7 +419,9 @@ def _unregister_dropped(state_dir: Path) -> None:
             continue
         _unregister_rule(strategy_path, rule_id)
         _remove_from_rule_evaluation(state_dir, rule_id)
-        logger.info("Unregistered %s from strategy.py and rule_evaluation.json", rule_id)
+        logger.info(
+            "Unregistered %s from strategy.py and rule_evaluation.json", rule_id
+        )
 
 
 def _unregister_rule(strategy_path: Path, rule_id: str) -> None:
@@ -305,11 +440,17 @@ def _remove_from_rule_evaluation(state_dir: Path, rule_id: str) -> None:
     if not rule_eval_path.exists():
         return
     try:
-        evaluation = RuleEvaluation.model_validate_json(rule_eval_path.read_text(encoding="utf-8"))
+        evaluation = RuleEvaluation.model_validate_json(
+            rule_eval_path.read_text(encoding="utf-8")
+        )
         evaluation.rules = [r for r in evaluation.rules if r.rule_id != rule_id]
-        rule_eval_path.write_text(evaluation.model_dump_json(indent=2), encoding="utf-8")
+        rule_eval_path.write_text(
+            evaluation.model_dump_json(indent=2), encoding="utf-8"
+        )
     except Exception:
-        logger.warning("Could not update rule_evaluation.json after unregistering %s", rule_id)
+        logger.warning(
+            "Could not update rule_evaluation.json after unregistering %s", rule_id
+        )
 
 
 def _commit_and_push(rule_id: str, function_name: str) -> None:

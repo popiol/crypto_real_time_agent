@@ -18,9 +18,8 @@ import cmath
 import math
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_05_fft_cycle_v1"
 
 # Minimum warm candles; fewer than half a 24-hour window is not enough for cycle detection
 MIN_CANDLES = 12
@@ -31,7 +30,6 @@ AMPLITUDE_THRESHOLD = 0.3
 # cos(phase) must be below −TROUGH_THRESHOLD to be considered a trough
 TROUGH_THRESHOLD = 0.7
 
-MarketData = dict[str, PairData]
 
 
 def _detrend(series: list[float]) -> list[float]:
@@ -82,8 +80,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         price = pair_data.hot[-1].last_price
 
         if cos_phase < -TROUGH_THRESHOLD:
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=price))
         elif cos_phase > TROUGH_THRESHOLD:
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=price))
 
     return signals

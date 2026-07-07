@@ -21,15 +21,13 @@ from __future__ import annotations
 
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_09_markov_chain_v1"
 
 N_STATES = 3
 SIGNAL_THRESHOLD = 0.6      # P(move to higher state) must exceed this
 MIN_WARM_CANDLES = 12       # need enough transitions to estimate probabilities
 
-MarketData = dict[str, PairData]
 
 
 def _discretize(closes: list[float]) -> list[int]:
@@ -85,11 +83,11 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         if current_state < N_STATES - 1:
             p_up = sum(T[current_state][j] for j in range(current_state + 1, N_STATES))
             if p_up > SIGNAL_THRESHOLD:
-                signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+                signals.append(BuySignal(pair=pair, timestamp=ts, price=price))
 
         if current_state > 0:
             p_down = sum(T[current_state][j] for j in range(current_state))
             if p_down > SIGNAL_THRESHOLD:
-                signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+                signals.append(SellSignal(pair=pair, timestamp=ts, price=price))
 
     return signals

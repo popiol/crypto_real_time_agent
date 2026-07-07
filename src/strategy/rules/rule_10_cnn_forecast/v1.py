@@ -32,14 +32,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.agent.models import BuySignal, PairData, SellSignal, WarmCandle
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal, WarmCandle
 
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
 
 logger = logging.getLogger(__name__)
 
-RULE_ID = "rule_10_cnn_forecast_v1"
 
 WINDOW_SIZE = 20  # warm candles per input window
 N_FEATURES = 2  # features per candle: (close_norm, roc)
@@ -54,7 +53,6 @@ _MODEL_PATH = Path("data") / "rules" / "rule_10_cnn_forecast" / "model.keras"
 _PENDING_PATH = Path("data") / "rules" / "rule_10_cnn_forecast" / "pending.ndjson"
 _STATE_PATH = Path("data") / "rules" / "rule_10_cnn_forecast" / "state.json"
 
-MarketData = dict[str, PairData]
 
 # ── Module-level state (persists for the lifetime of the process) ─────────────
 _model: Any = None
@@ -254,7 +252,6 @@ def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
             signals.append(
                 BuySignal(
                     pair=pair,
-                    rule_id=RULE_ID,
                     timestamp=ts,
                     price=price,
                     confidence=prob,
@@ -264,7 +261,6 @@ def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
             signals.append(
                 SellSignal(
                     pair=pair,
-                    rule_id=RULE_ID,
                     timestamp=ts,
                     price=price,
                     confidence=1 - prob,

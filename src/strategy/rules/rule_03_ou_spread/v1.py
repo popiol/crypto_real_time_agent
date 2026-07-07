@@ -14,9 +14,8 @@ from __future__ import annotations
 import math
 import statistics
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_03_ou_spread_v1"
 
 # Minimum hot-tier ticks required for a reliable OU fit
 MIN_TICKS = 30
@@ -28,7 +27,6 @@ THRESHOLD = 1.5
 SLOPE_WINDOW = 5
 
 
-MarketData = dict[str, PairData]
 
 
 def _fit_ou(series: list[float]) -> tuple[float, float, float]:
@@ -97,8 +95,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         price = ticks[-1].last_price
 
         if current_spread > mu + THRESHOLD * sigma and recent_slope < 0:
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=price))
         elif current_spread < mu - THRESHOLD * sigma and recent_slope > 0:
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=price))
 
     return signals

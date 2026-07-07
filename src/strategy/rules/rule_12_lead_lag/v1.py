@@ -23,16 +23,14 @@ import math
 
 import numpy as np
 
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-RULE_ID = "rule_12_lead_lag_v1"
 
 MIN_CANDLES = 20  # minimum warm candles per asset for reliable correlation
 MAX_LAG = 3  # maximum lead time in hours to consider
 CORR_THRESHOLD = 0.5  # minimum Pearson r to treat a lag as a real relationship
 LEAD_THRESHOLD = 0.01  # A's k-hour cumulative return must exceed this to signal
 
-MarketData = dict[str, PairData]
 
 # ── Pair cache (refreshed when warm tier changes, i.e. ~hourly) ───────────────
 _cached_pairs: list[tuple[str, str, int, float]] = []  # (A, B, lag, corr)
@@ -140,9 +138,9 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 
         if a_return > LEAD_THRESHOLD:
             seen_targets.add(b)
-            signals.append(BuySignal(pair=b, rule_id=RULE_ID, timestamp=ts, price=price, confidence=corr))
+            signals.append(BuySignal(pair=b, timestamp=ts, price=price, confidence=corr))
         elif a_return < -LEAD_THRESHOLD:
             seen_targets.add(b)
-            signals.append(SellSignal(pair=b, rule_id=RULE_ID, timestamp=ts, price=price, confidence=corr))
+            signals.append(SellSignal(pair=b, timestamp=ts, price=price, confidence=corr))
 
     return signals

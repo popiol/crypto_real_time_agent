@@ -13,15 +13,13 @@ Sell signal: imbalance < −IMBALANCE_THRESHOLD sustained for MIN_SUSTAINED_TICK
 
 from __future__ import annotations
 
-from src.agent.models import BuySignal, PairData, SellSignal, Tick
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal, Tick
 
-RULE_ID = "rule_07_order_book_imbalance_v1"
 
 MIN_TICKS = 10
 IMBALANCE_THRESHOLD = 0.3   # net buy-side fraction required
 MIN_SUSTAINED_TICKS = 5     # consecutive ticks the imbalance must hold
 
-MarketData = dict[str, PairData]
 
 
 def _imbalance(tick: Tick) -> float | None:
@@ -59,8 +57,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         price = ticks[-1].last_price
 
         if all(v > IMBALANCE_THRESHOLD for v in imbalances):  # type: ignore[operator]
-            signals.append(BuySignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=price))
         elif all(v < -IMBALANCE_THRESHOLD for v in imbalances):  # type: ignore[operator]
-            signals.append(SellSignal(pair=pair, rule_id=RULE_ID, timestamp=ts, price=price))
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=price))
 
     return signals
