@@ -25,7 +25,7 @@ from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.agent.models import AppConfig
 from src.updater.llm import make_llm
@@ -93,13 +93,22 @@ class _ImplementationFailed(Exception):
 
 
 class _CodeChange(BaseModel):
-    action: Literal["add", "remove"]
-    line: int
-    code: str = ""
+    action: Literal["add", "remove"] = Field(
+        description="'add' inserts code after the given line; 'remove' deletes it."
+    )
+    line: int = Field(
+        description="1-indexed line number. For 'add', new code is inserted after this line (0 = before line 1). For 'remove', this line is deleted."
+    )
+    code: str = Field(
+        default="",
+        description="Source text to insert. Only used for 'add'. Use \\n for multiple lines.",
+    )
 
 
 class _CodeDiff(BaseModel):
-    changes: list[_CodeChange]
+    changes: list[_CodeChange] = Field(
+        description="Ordered list of line-level changes that together fix the syntax error."
+    )
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
