@@ -17,6 +17,8 @@ Writes:
 
 from __future__ import annotations
 
+import ast
+import inspect
 import logging
 import re
 import subprocess
@@ -27,6 +29,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
+import src.agent.models as _agent_models
 from src.agent.models import AppConfig
 from src.updater.llm import make_llm
 from src.updater.models import (
@@ -39,6 +42,18 @@ from src.updater.models import (
 
 logger = logging.getLogger(__name__)
 
+_MODELS_SOURCE = "\n\n".join(
+    inspect.getsource(cls)
+    for cls in (
+        _agent_models.Tick,
+        _agent_models.WarmCandle,
+        _agent_models.ColdMonth,
+        _agent_models.PairData,
+        _agent_models.BuySignal,
+        _agent_models.SellSignal,
+    )
+) + "\n\nMarketData = dict[str, PairData]"
+
 _RULES_DIR = Path("src/strategy/rules")
 _STRATEGY_FILE = Path("src/strategy/strategy.py")
 
@@ -48,8 +63,10 @@ _IMPLEMENT_SYSTEM = (
 )
 
 _FIX_SYSTEM = (
-    "You are an expert Python developer. You will be given a Python module with a syntax error. "
-    "Return a minimal set of changes to fix the error. Do not rewrite the whole file."
+    "You are an expert Python developer specialising in quantitative trading rules. "
+    "You will be given a partial or broken implementation of a trading rule. "
+    "Return the changes needed to complete it into a fully working module. "
+    "Do not rewrite parts that are already correct."
 )
 
 _REFERENCE_RULE = """\
@@ -181,7 +198,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
 
 def _pick_best(ideas: list[RuleIdea]) -> RuleIdea | None:
-    candidates = [i for i in ideas if i.status == "evaluated" and i.score is not None]
+    candidates: list[RuleIdea] = [i for i in ideas if i.status == "evaluated" and i.score is not None]
     if not candidates:
         return None
     return max(candidates, key=lambda i: i.score or 0.0)
@@ -227,12 +244,25 @@ def _rule_id_to_import_path(rule_id: str) -> str:
 
 
 def _check_syntax(code: str) -> str | None:
-    """Return a syntax-error description, or None if the code is valid."""
+    """Return an error description, or None if the code is a valid complete rule."""
     try:
-        compile(code, "<generated>", "exec")
-        return None
+        tree = ast.parse(code)
     except SyntaxError as exc:
         return f"SyntaxError at line {exc.lineno}: {exc.msg}"
+    signal_fn = next(
+        (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "signal"
+        ),
+        None,
+    )
+    if signal_fn is None:
+        return "Missing required top-level function: signal(data: MarketData)"
+    has_return = any(isinstance(node, ast.Return) for node in ast.walk(signal_fn))
+    if not has_return:
+        return "signal() has no return statement — function body is likely incomplete"
+    return None
 
 
 def _apply_changes(code: str, changes: list[_CodeChange]) -> str:
@@ -284,6 +314,7 @@ def _initial_code(idea: RuleIdea, llm: BaseChatModel) -> str:
         f"Implement this trading rule idea as a Python module.\n\n"
         f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
         f"{existing_section}"
+        f"Available data models:\n{_MODELS_SOURCE}\n\n"
         f"Reference rule structure to follow exactly:\n{_REFERENCE_RULE}\n\n"
         "Requirements:\n"
         "1. The public entry-point function MUST be named exactly `signal` "
@@ -306,14 +337,15 @@ def _initial_code(idea: RuleIdea, llm: BaseChatModel) -> str:
     return code
 
 
-def _fix_with_diff(code: str, error: str, idea: RuleIdea, llm: BaseChatModel) -> str:
-    """Ask the LLM for a diff to fix `error` in `code`, then apply it."""
+def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
+    """Ask the LLM for a diff to complete/fix `code`, then apply it."""
     structured = llm.with_structured_output(_CodeDiff)
     user_prompt = (
         f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
+        f"Available data models:\n{_MODELS_SOURCE}\n\n"
+        f"Reference rule structure:\n{_REFERENCE_RULE}\n\n"
         "Entry-point function name: signal\n\n"
-        f"Current code:\n{code}\n\n"
-        f"Syntax error to fix: {error}"
+        f"Partial implementation to complete:\n{code}"
     )
     try:
         result = structured.invoke(
@@ -342,7 +374,7 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
         logger.warning(
             "Syntax error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
         )
-        code = _fix_with_diff(code, error, idea, llm)
+        code = _fix_with_diff(code, idea, llm)
     else:
         error = _check_syntax(code)
         if error is not None:
