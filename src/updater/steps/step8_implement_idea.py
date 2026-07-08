@@ -356,30 +356,35 @@ def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
         )
         if not isinstance(result, _CodeDiff):
             raise TypeError(f"Expected _CodeDiff, got {type(result).__name__}")
+        logger.debug("Applying %d change(s) from diff", len(result.changes))
         return _apply_changes(code, result.changes)
     except Exception:
-        logger.warning("Diff generation failed; code unchanged", exc_info=True)
+        logger.warning("Diff generation/application failed; code unchanged", exc_info=True)
         return code
 
 
 def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
     llm = make_llm(model)
 
+    logger.info("Generating initial code for idea '%s' (%s)", idea.title, idea.idea_id)
     code = _initial_code(idea, llm)
+    logger.debug("Initial code (%d chars):\n%s", len(code), code)
 
     for attempt in range(_MAX_FIX_ATTEMPTS):
         error = _check_syntax(code)
         if error is None:
+            logger.info("Code passed validation after %d fix attempt(s)", attempt)
             break
         logger.warning(
-            "Syntax error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
+            "Validation error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
         )
         code = _fix_with_diff(code, idea, llm)
+        logger.debug("Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code)
     else:
         error = _check_syntax(code)
         if error is not None:
             raise _ImplementationFailed(
-                f"Code still has syntax errors after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
+                f"Code still failing after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
             )
 
     return ImplementedRule(
