@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_15_hidden_markov_model_hmm_for_pr.v1 as rule_15_hidden_markov_model_hmm_for_pr_v1
 import src.strategy.rules.rule_09_markov_chain.v3 as rule_09_markov_chain_v3
 import src.strategy.rules.rule_14_adaptive_regime_switching_stra.v1 as rule_14_adaptive_regime_switching_stra_v1
 import src.strategy.rules.rule_04_arima_forecast.v3 as rule_04_arima_forecast_v3
@@ -61,6 +62,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_04_arima_forecast_v3,
     rule_14_adaptive_regime_switching_stra_v1,
     rule_09_markov_chain_v3,
+    rule_15_hidden_markov_model_hmm_for_pr_v1,
 ]
 
 
