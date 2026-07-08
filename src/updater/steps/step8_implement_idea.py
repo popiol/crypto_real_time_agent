@@ -30,6 +30,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 import src.agent.models as _agent_models
+from src.agent.db import open_db
 from src.agent.models import AppConfig
 from src.updater.llm import make_llm
 from src.updater.models import (
@@ -138,7 +139,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     backlog = IdeaBacklog.model_validate_json(backlog_path.read_text(encoding="utf-8"))
 
     # 1. Unregister dropped / deprecated versions
-    _unregister_dropped(state_dir)
+    _unregister_dropped(state_dir, config)
 
     # 2. Select best evaluated idea
     idea = _pick_best(backlog.ideas)
@@ -427,7 +428,7 @@ def _register_rule(strategy_path: Path, rule_id: str) -> None:
     logger.info("Registered %s in strategy.py", rule_id)
 
 
-def _unregister_dropped(state_dir: Path) -> None:
+def _unregister_dropped(state_dir: Path, config: AppConfig) -> None:
     to_remove: list[str] = []
 
     rule_eval_path = state_dir / "rule_evaluation.json"
@@ -466,8 +467,9 @@ def _unregister_dropped(state_dir: Path) -> None:
             continue
         _unregister_rule(strategy_path, rule_id)
         _remove_from_rule_evaluation(state_dir, rule_id)
+        _remove_signals(rule_id, config)
         logger.info(
-            "Unregistered %s from strategy.py and rule_evaluation.json", rule_id
+            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger", rule_id
         )
 
 
@@ -498,6 +500,15 @@ def _remove_from_rule_evaluation(state_dir: Path, rule_id: str) -> None:
         logger.warning(
             "Could not update rule_evaluation.json after unregistering %s", rule_id
         )
+
+
+def _remove_signals(rule_id: str, config: AppConfig) -> None:
+    try:
+        with open_db(config.data_dir) as con:
+            con.execute("DELETE FROM signals WHERE rule_id = ?", (rule_id,))
+        logger.info("Deleted signals for deprecated rule %s", rule_id)
+    except Exception:
+        logger.warning("Could not delete signals for rule %s", rule_id, exc_info=True)
 
 
 def _commit_and_push(rule_id: str, function_name: str) -> None:
