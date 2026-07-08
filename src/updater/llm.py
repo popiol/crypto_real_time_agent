@@ -28,21 +28,22 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 _MAX_TOKENS = 16384
+_REQUEST_TIMEOUT = 120
 
 
 def make_llm(model: str) -> BaseChatModel:
     if model.startswith("gemini"):
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        return ChatGoogleGenerativeAI(model=model, max_tokens=_MAX_TOKENS)
+        return ChatGoogleGenerativeAI(model=model, max_tokens=_MAX_TOKENS, timeout=_REQUEST_TIMEOUT)
     if model.startswith("claude"):
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(model=model, max_tokens=_MAX_TOKENS)
+        return ChatAnthropic(model=model, max_tokens=_MAX_TOKENS, timeout=_REQUEST_TIMEOUT)
     if model.startswith(("gpt-", "o1", "o3", "o4")):
         from langchain_openai import ChatOpenAI
 
-        return ChatOpenAI(model=model, max_tokens=_MAX_TOKENS)
+        return ChatOpenAI(model=model, max_tokens=_MAX_TOKENS, request_timeout=_REQUEST_TIMEOUT)
     raise ValueError(
         f"Cannot infer LangChain provider from model name '{model}'. "
         "Expected prefix: gemini-, claude-, gpt-, o1, o3, o4."
