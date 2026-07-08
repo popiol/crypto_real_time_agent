@@ -50,8 +50,10 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     ledger_signals = storage.read_signals(config)
 
-    # Load description cache from the prior run's rule_evaluation.json
-    desc_cache: dict[str, str] = _load_desc_cache(state_dir / "rule_evaluation.json")
+    # Load caches from the prior run's rule_evaluation.json
+    prior_eval_path = state_dir / "rule_evaluation.json"
+    desc_cache: dict[str, str] = _load_desc_cache(prior_eval_path)
+    zero_cycles_cache: dict[str, int] = _load_zero_cycles_cache(prior_eval_path)
 
     scores: list[RuleScore] = []
     for rule_module in ACTIVE_RULES:
@@ -59,7 +61,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
         description = _describe(rule_id, rule_module, desc_cache, config.llm_model)
         desc_cache[rule_id] = description
-        scores.append(_score(rule_id, description, ledger_signals, config))
+        scores.append(_score(rule_id, description, ledger_signals, zero_cycles_cache, config))
 
     try:
         summary_result = llm_structured(
@@ -98,6 +100,17 @@ def _load_desc_cache(rule_eval_path: Path) -> dict[str, str]:
         return {}
 
 
+def _load_zero_cycles_cache(rule_eval_path: Path) -> dict[str, int]:
+    """Extract consecutive zero-signal cycle counts from the previous rule_evaluation.json."""
+    if not rule_eval_path.exists():
+        return {}
+    try:
+        prior = RuleEvaluation.model_validate_json(rule_eval_path.read_text(encoding="utf-8"))
+        return {r.rule_id: r.zero_signal_cycles for r in prior.rules}
+    except Exception:
+        return {}
+
+
 def _describe(rule_id: str, rule_module, cache: dict[str, str], model: str) -> str:
     if rule_id in cache:
         return cache[rule_id]
@@ -122,6 +135,7 @@ def _score(
     rule_id: str,
     description: str,
     ledger_signals: list[dict],
+    zero_cycles_cache: dict[str, int],
     config: AppConfig,
 ) -> RuleScore:
     matching = [
@@ -131,6 +145,13 @@ def _score(
     signal_count = len(matching)
 
     if signal_count == 0:
+        zero_signal_cycles = zero_cycles_cache.get(rule_id, 0) + 1
+        status = "deprecate" if zero_signal_cycles >= config.rule_zero_signal_max_cycles else "candidate"
+        if status == "deprecate":
+            logger.warning(
+                "Rule %s has emitted 0 signals for %d consecutive cycles; marking for deprecation",
+                rule_id, zero_signal_cycles,
+            )
         return RuleScore(
             rule_id=rule_id,
             description=description,
@@ -141,7 +162,8 @@ def _score(
             avg_gain_24h=0.0,
             max_gain_24h=0.0,
             score=0.0,
-            status="candidate",
+            status=status,
+            zero_signal_cycles=zero_signal_cycles,
         )
 
     gains_pct = [s["outcome"]["gain_pct"] for s in matching]

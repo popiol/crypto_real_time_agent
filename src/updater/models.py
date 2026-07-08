@@ -47,6 +47,7 @@ class RuleScore(BaseModel):
     max_gain_24h: float
     score: float
     status: Literal["candidate", "active", "deprecate"]
+    zero_signal_cycles: int = 0
 
 
 class RuleEvaluation(BaseModel):

@@ -101,3 +101,4 @@ class AppConfig(BaseModel):
     rule_mature_days: int = 7              # evaluation days before "mature" logic applies
     rule_early_deprecation_gain: float = -0.10  # deprecate immediately below this avg gain (ratio)
     rule_mature_deprecation_gain: float = 0.0   # deprecate mature rule at or below this avg gain
+    rule_zero_signal_max_cycles: int = 7   # deprecate a rule that emits 0 signals for this many consecutive analysis cycles
