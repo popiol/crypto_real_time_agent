@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_13_trend_following_with_mean_reve.v1 as rule_13_trend_following_with_mean_reve_v1
 import src.strategy.rules.rule_04_arima_forecast.v2 as rule_04_arima_forecast_v2
 import src.strategy.rules.rule_05_fft_cycle.v2 as rule_05_fft_cycle_v2
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
@@ -47,6 +48,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_12_lead_lag_v1,
     rule_05_fft_cycle_v2,
     rule_04_arima_forecast_v2,
+    rule_13_trend_following_with_mean_reve_v1,
 ]
 
 

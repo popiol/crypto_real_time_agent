@@ -35,11 +35,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
         rule_eval_path.read_text(encoding="utf-8")
     )
 
-    # Group scored (non-candidate) rules by base name
+    # Group all rules by base name (include candidates so multi-version rules are visible)
     by_base: dict[str, list] = {}
     for rule in evaluation.rules:
-        if rule.status == "candidate":
-            continue
         base = _base_name(rule.rule_id)
         by_base.setdefault(base, []).append(rule)
 
@@ -47,13 +45,24 @@ def run(config: AppConfig, state_dir: Path) -> None:
     for base, versions in by_base.items():
         if len(versions) < 2:
             continue
-        best = max(versions, key=lambda r: r.score)
+        scored = [v for v in versions if v.status != "candidate"]
+        if len(scored) < 2:
+            # Not enough evaluated versions to make a drop decision yet
+            comparisons.append(
+                RuleVersionComparison(
+                    rule_name=base,
+                    versions_compared=[v.rule_id for v in versions],
+                    best_version=scored[0].rule_id if scored else versions[0].rule_id,
+                    versions_to_drop=[],
+                    rationale="Insufficient evaluated versions to compare; awaiting signal data.",
+                )
+            )
+            continue
+        best = max(scored, key=lambda r: r.score)
         to_drop = [
-            v.rule_id for v in versions
+            v.rule_id for v in scored
             if v.rule_id != best.rule_id and best.score - v.score >= _DROP_MARGIN
         ]
-        if not to_drop:
-            continue
         comparisons.append(
             RuleVersionComparison(
                 rule_name=base,
