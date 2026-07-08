@@ -43,7 +43,6 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_10_cnn_forecast_v1,
     rule_11_dqn_agent_v1,
     rule_12_lead_lag_v1,
-    rule_05_fft_cycle_v2,
 ]
 
 
