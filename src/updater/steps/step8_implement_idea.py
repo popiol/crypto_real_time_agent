@@ -59,7 +59,8 @@ _STRATEGY_FILE = Path("src/strategy/strategy.py")
 
 _IMPLEMENT_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
-    "Generate a complete, self-contained Python module that implements the described rule."
+    "Generate a complete, self-contained Python module that implements the described rule. "
+    "Return ONLY the raw Python source code — no explanation, no markdown, no code fences."
 )
 
 _FIX_SYSTEM = (
@@ -331,9 +332,9 @@ def _initial_code(idea: RuleIdea, llm: BaseChatModel) -> str:
         if isinstance(raw, str)
         else "".join(p if isinstance(p, str) else p.get("text", "") for p in raw)
     ).strip()
-    if code.startswith("```"):
-        code = re.sub(r"^```[a-z]*\n?", "", code)
-        code = re.sub(r"\n?```$", "", code)
+    m = re.search(r"```(?:python)?\n(.*?)```", code, re.DOTALL)
+    if m:
+        code = m.group(1).strip()
     return code
 
 

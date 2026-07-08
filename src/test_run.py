@@ -67,6 +67,10 @@ def run(config: AppConfig) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crypto test runner (historical replay)")
     parser.add_argument("config", nargs="?", default="config.yaml", help="Path to config YAML")
+    parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
     args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     run(load_config(args.config))
