@@ -15,12 +15,10 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_04_arima_forecast.v2 as rule_04_arima_forecast_v2
+import src.strategy.rules.rule_21_keltner_channel_breakout_with_.v2 as rule_21_keltner_channel_breakout_with__v2
 import src.strategy.rules.rule_23_ichimoku_cloud_breakout_with_r.v1 as rule_23_ichimoku_cloud_breakout_with_r_v1
-import src.strategy.rules.rule_04_arima_forecast.v3 as rule_04_arima_forecast_v3
 import src.strategy.rules.rule_22_triple_moving_average_crossove.v1 as rule_22_triple_moving_average_crossove_v1
 import src.strategy.rules.rule_21_keltner_channel_breakout_with_.v1 as rule_21_keltner_channel_breakout_with__v1
-import src.strategy.rules.rule_20_vwap_band_breakout_with_rsi_co.v1 as rule_20_vwap_band_breakout_with_rsi_co_v1
-import src.strategy.rules.rule_05_fft_cycle.v4 as rule_05_fft_cycle_v4
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
 import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
@@ -36,13 +34,11 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_05_fft_cycle_v1,
     rule_09_markov_chain_v1,
     rule_12_lead_lag_v1,
-    rule_05_fft_cycle_v4,
-    rule_20_vwap_band_breakout_with_rsi_co_v1,
     rule_21_keltner_channel_breakout_with__v1,
     rule_22_triple_moving_average_crossove_v1,
     rule_04_arima_forecast_v2,
-    rule_04_arima_forecast_v3,
     rule_23_ichimoku_cloud_breakout_with_r_v1,
+    rule_21_keltner_channel_breakout_with__v2,
 ]
 
 
