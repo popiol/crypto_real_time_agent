@@ -15,25 +15,25 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
+import src.strategy.rules.rule_13_vwap_deviation_with_volume_con.v2 as rule_13_vwap_deviation_with_volume_con_v2
 import src.strategy.rules.rule_08_roc_momentum.v3 as rule_08_roc_momentum_v3
 import src.strategy.rules.rule_14_rsi_mid_range_crossover_for_fr.v1 as rule_14_rsi_mid_range_crossover_for_fr_v1
 import src.strategy.rules.rule_08_roc_momentum.v2 as rule_08_roc_momentum_v2
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
 import src.strategy.rules.rule_07_order_book_imbalance.v2 as rule_07_order_book_imbalance_v2
-import src.strategy.rules.rule_13_vwap_deviation_with_volume_con.v1 as rule_13_vwap_deviation_with_volume_con_v1
 from src.agent.models import BuySignal, PairData, SellSignal
 
 MarketData = dict[str, PairData]
 Signal = BuySignal | SellSignal
 
 ACTIVE_RULES: list[ModuleType] = [
-    rule_13_vwap_deviation_with_volume_con_v1,
     rule_07_order_book_imbalance_v2,
     rule_02_bollinger_band_v2,
     rule_08_roc_momentum_v2,
     rule_14_rsi_mid_range_crossover_for_fr_v1,
     rule_02_bollinger_band_v3,
     rule_08_roc_momentum_v3,
+    rule_13_vwap_deviation_with_volume_con_v2,
 ]
 
 
