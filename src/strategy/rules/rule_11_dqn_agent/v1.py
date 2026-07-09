@@ -310,9 +310,13 @@ def _infer(data: MarketData) -> list[BuySignal | SellSignal]:
         confidence = 1.0 / (1.0 + math.exp(-(float(q[best]) - float(q[0]))))
 
         if best == 1:
-            signals.append(BuySignal(pair=pair, timestamp=ts, price=price, confidence=confidence))
+            signals.append(
+                BuySignal(pair=pair, timestamp=ts, price=price, confidence=confidence)
+            )
         elif best == 2:
-            signals.append(SellSignal(pair=pair, timestamp=ts, price=price, confidence=confidence))
+            signals.append(
+                SellSignal(pair=pair, timestamp=ts, price=price, confidence=confidence)
+            )
 
     return signals
 

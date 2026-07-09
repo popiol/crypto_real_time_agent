@@ -32,7 +32,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from src.agent.models import BuySignal, MarketData, PairData, SellSignal, WarmCandle
+from src.agent.models import BuySignal, MarketData, SellSignal, WarmCandle
 
 os.environ.setdefault("TF_ENABLE_ONEDNN_OPTS", "0")
 os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
@@ -43,8 +43,8 @@ logger = logging.getLogger(__name__)
 WINDOW_SIZE = 20  # warm candles per input window
 N_FEATURES = 2  # features per candle: (close_norm, roc)
 FORECAST_HORIZON = timedelta(hours=24)
-GAIN_THRESHOLD = 0.01  # ≥1% gain in 24 h → label 1
-SIGNAL_THRESHOLD = 0.6
+GAIN_THRESHOLD = 0.005  # ≥1% gain in 24 h → label 1
+SIGNAL_THRESHOLD = 0.5
 MIN_TRAINING_STEPS = 10  # suppress inference until this many steps done
 RECORD_INTERVAL = timedelta(hours=1)  # record at most once per pair per hour
 SAVE_EVERY = 10  # persist model every N training steps

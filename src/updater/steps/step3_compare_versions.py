@@ -49,7 +49,8 @@ def run(config: AppConfig, state_dir: Path) -> None:
             continue
         best = max(versions, key=lambda r: r.score)
         to_drop = [
-            v.rule_id for v in versions
+            v.rule_id
+            for v in versions
             if v.rule_id != best.rule_id and best.score - v.score >= _DROP_MARGIN
         ]
         if not to_drop:
@@ -61,10 +62,16 @@ def run(config: AppConfig, state_dir: Path) -> None:
                 best_version=best.rule_id,
                 versions_to_drop=to_drop,
                 rationale=(
-                    f"Best version '{best.rule_id}' scores {best.score:.3f}. "
-                    + "; ".join(
-                        f"'{r.rule_id}' scores {r.score:.3f} (Δ={best.score - r.score:.3f})"
-                        for r in versions if r.rule_id in to_drop
+                    f"Best version '{best.rule_id}' scores {best.score:.3f}"
+                    + (
+                        "; "
+                        + "; ".join(
+                            f"'{r.rule_id}' scores {r.score:.3f} (delta={best.score - r.score:.3f})"
+                            for r in scored
+                            if r.rule_id in to_drop
+                        )
+                        if to_drop
+                        else ""
                     )
                 ),
             )

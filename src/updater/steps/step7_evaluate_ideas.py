@@ -36,7 +36,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
     plan_path = state_dir / "long_term_plan.json"
     if plan_path.exists():
         try:
-            plan = LongTermPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+            plan = LongTermPlan.model_validate_json(
+                plan_path.read_text(encoding="utf-8")
+            )
             plan_text = plan.model_dump_json(indent=2)
         except Exception:
             pass
@@ -54,7 +56,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
             "all others as 'evaluated'. "
             "Return the complete updated idea list.\n\n"
             f"Long-term plan:\n{plan_text}\n\n"
-            f"Ideas to score:\n{backlog.model_dump_json(indent=2)}"
+            f"Ideas to score:\n{IdeaBacklog(ideas=scoreable).model_dump_json(indent=2)}"
         ),
         output_type=IdeaBacklog,
     )

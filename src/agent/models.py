@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class OrderBookLevel(BaseModel):
@@ -63,9 +63,16 @@ class ColdMonth(BaseModel):
 
 
 class PairData(BaseModel):
-    hot: list[Tick] = []
-    warm: list[WarmCandle] = []
-    cold: list[ColdMonth] = []
+    hot: list[Tick] = Field(
+        default=[],
+        description="TTL-capped; ~300 ticks at 1 poll/sec with default 300s retention",
+    )
+    warm: list[WarmCandle] = Field(
+        default=[], description="At most 24 entries (last 24 hourly candles)"
+    )
+    cold: list[ColdMonth] = Field(
+        default=[], description="One entry per calendar month; unbounded"
+    )
 
 
 MarketData = dict[str, PairData]
@@ -98,6 +105,11 @@ class AppConfig(BaseModel):
     backoff_max_seconds: float = 60.0
     llm_model: str = "gemini-2.0-flash"
     rule_min_signals: int = 20
-    rule_mature_days: int = 7              # evaluation days before "mature" logic applies
-    rule_early_deprecation_gain: float = -0.10  # deprecate immediately below this avg gain (ratio)
-    rule_mature_deprecation_gain: float = 0.0   # deprecate mature rule at or below this avg gain
+    rule_mature_days: int = 7  # evaluation days before "mature" logic applies
+    rule_early_deprecation_gain: float = (
+        -0.10
+    )  # deprecate immediately below this avg gain (ratio)
+    rule_mature_deprecation_gain: float = (
+        0.0  # deprecate mature rule at or below this avg gain
+    )
+    rule_zero_signal_max_cycles: int = 7  # deprecate a rule that emits 0 signals for this many consecutive analysis cycles
