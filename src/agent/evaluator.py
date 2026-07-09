@@ -29,51 +29,65 @@ def evaluate_pending_signals(config: AppConfig, reference_time: datetime | None 
 
     with open_db(config.data_dir) as con:
         pending = con.execute(
-            """SELECT signal_id, pair, emitted_at, price_at_signal, gain_24h_pct
+            """SELECT signal_id, pair, emitted_at, price_at_signal
                FROM signals WHERE direction='buy' AND gain_pct IS NULL"""
         ).fetchall()
-
-        if not pending:
-            return
-
+        needs_24h = con.execute(
+            """SELECT signal_id, pair, emitted_at, price_at_signal
+               FROM signals WHERE direction='buy' AND gain_24h_pct IS NULL"""
+        ).fetchall()
         sell_rows = con.execute(
             "SELECT pair, emitted_at FROM signals WHERE direction='sell'"
         ).fetchall()
 
-    sell_index: dict[str, list[datetime]] = {}
+    sell_index = _build_sell_index(sell_rows)
+    _update_24h_metrics(needs_24h, now, config)
+    _resolve_pending(pending, now, sell_index, config)
+
+
+def _build_sell_index(sell_rows) -> dict[str, list[datetime]]:
+    index: dict[str, list[datetime]] = {}
     for r in sell_rows:
         dt = _parse_dt(r["emitted_at"])
         if dt is not None:
-            sell_index.setdefault(r["pair"], []).append(dt)
+            index.setdefault(r["pair"], []).append(dt)
+    return index
 
-    for row in pending:
-        signal_id = row["signal_id"]
-        pair = row["pair"]
+
+def _update_24h_metrics(rows, now: datetime, config: AppConfig) -> None:
+    for row in rows:
         emitted_at = _parse_dt(row["emitted_at"])
         price_at_signal = row["price_at_signal"]
-
         if emitted_at is None or price_at_signal is None:
             continue
+        age = now - emitted_at
+        if not (_24H <= age <= _24H_GRACE):
+            continue
+        metrics = _compute_24h_metrics(row["pair"], emitted_at, price_at_signal, config)
+        if metrics is not None:
+            with open_db(config.data_dir) as con:
+                con.execute(
+                    "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
+                    (metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], row["signal_id"]),
+                )
 
-        if row["gain_24h_pct"] is None:
-            age = now - emitted_at
-            if _24H <= age <= _24H_GRACE:
-                metrics = _compute_24h_metrics(pair, emitted_at, price_at_signal, config)
-                if metrics is not None:
-                    with open_db(config.data_dir) as con:
-                        con.execute(
-                            "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
-                            (metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], signal_id),
-                        )
 
-        outcome = _resolve_outcome(pair, emitted_at, price_at_signal, now, sell_index, config)
+def _resolve_pending(
+    pending, now: datetime, sell_index: dict[str, list[datetime]], config: AppConfig
+) -> None:
+    for row in pending:
+        emitted_at = _parse_dt(row["emitted_at"])
+        price_at_signal = row["price_at_signal"]
+        if emitted_at is None or price_at_signal is None:
+            continue
+        outcome = _resolve_outcome(row["pair"], emitted_at, price_at_signal, now, sell_index, config)
         if outcome is not None:
             with open_db(config.data_dir) as con:
                 con.execute(
                     """UPDATE signals SET evaluated_at=?, exit_price=?, exit_reason=?, gain_pct=?
                        WHERE signal_id=?""",
                     (outcome["evaluated_at"], outcome["exit_price"],
-                     outcome["exit_reason"], outcome["gain_pct"], signal_id),
+                     outcome["exit_reason"], outcome["gain_pct"], row["signal_id"]),
                 )
 
 
@@ -93,9 +107,6 @@ def _resolve_outcome(
         sell_time = min(sells_after)
         exit_price = _price_after(pair, sell_time, config)
         if exit_price is None:
-            logger.warning(
-                "No warm candle after sell signal for %s at %s — leaving pending", pair, sell_time
-            )
             return None
         return {
             "evaluated_at": now.isoformat(),
@@ -120,12 +131,14 @@ def _resolve_outcome(
 
 
 def _price_after(pair: str, after: datetime, config: AppConfig) -> float | None:
-    """Close of the first warm candle strictly after `after`."""
+    """Close of the first warm candle strictly after `after`, or latest if none yet."""
     warm = storage.read_warm_candles(pair, config)
-    candidates = [c for c in warm if c.hour > after]
-    if not candidates:
+    if not warm:
         return None
-    return min(candidates, key=lambda c: c.hour).close
+    candidates = [c for c in warm if c.hour > after]
+    if candidates:
+        return min(candidates, key=lambda c: c.hour).close
+    return warm[-1].close
 
 
 def _latest_price(pair: str, config: AppConfig) -> float | None:

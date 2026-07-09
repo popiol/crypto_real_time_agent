@@ -30,6 +30,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 import src.agent.models as _agent_models
+from src.agent.db import open_db
 from src.agent.models import AppConfig
 from src.updater.llm import make_llm
 from src.updater.models import (
@@ -138,7 +139,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     backlog = IdeaBacklog.model_validate_json(backlog_path.read_text(encoding="utf-8"))
 
     # 1. Unregister dropped / deprecated versions
-    _unregister_dropped(state_dir)
+    _unregister_dropped(state_dir, config)
 
     # 2. Select best evaluated idea
     idea = _pick_best(backlog.ideas)
@@ -357,30 +358,35 @@ def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
         )
         if not isinstance(result, _CodeDiff):
             raise TypeError(f"Expected _CodeDiff, got {type(result).__name__}")
+        logger.debug("Applying %d change(s) from diff", len(result.changes))
         return _apply_changes(code, result.changes)
     except Exception:
-        logger.warning("Diff generation failed; code unchanged", exc_info=True)
+        logger.warning("Diff generation/application failed; code unchanged", exc_info=True)
         return code
 
 
 def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
     llm = make_llm(model)
 
+    logger.info("Generating initial code for idea '%s' (%s)", idea.title, idea.idea_id)
     code = _initial_code(idea, llm)
+    logger.debug("Initial code (%d chars):\n%s", len(code), code)
 
     for attempt in range(_MAX_FIX_ATTEMPTS):
         error = _check_syntax(code)
         if error is None:
+            logger.info("Code passed validation after %d fix attempt(s)", attempt)
             break
         logger.warning(
-            "Syntax error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
+            "Validation error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
         )
         code = _fix_with_diff(code, idea, llm)
+        logger.debug("Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code)
     else:
         error = _check_syntax(code)
         if error is not None:
             raise _ImplementationFailed(
-                f"Code still has syntax errors after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
+                f"Code still failing after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
             )
 
     return ImplementedRule(
@@ -422,7 +428,7 @@ def _register_rule(strategy_path: Path, rule_id: str) -> None:
     logger.info("Registered %s in strategy.py", rule_id)
 
 
-def _unregister_dropped(state_dir: Path) -> None:
+def _unregister_dropped(state_dir: Path, config: AppConfig) -> None:
     to_remove: list[str] = []
 
     rule_eval_path = state_dir / "rule_evaluation.json"
@@ -461,8 +467,9 @@ def _unregister_dropped(state_dir: Path) -> None:
             continue
         _unregister_rule(strategy_path, rule_id)
         _remove_from_rule_evaluation(state_dir, rule_id)
+        _remove_signals(rule_id, config)
         logger.info(
-            "Unregistered %s from strategy.py and rule_evaluation.json", rule_id
+            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger", rule_id
         )
 
 
@@ -493,6 +500,15 @@ def _remove_from_rule_evaluation(state_dir: Path, rule_id: str) -> None:
         logger.warning(
             "Could not update rule_evaluation.json after unregistering %s", rule_id
         )
+
+
+def _remove_signals(rule_id: str, config: AppConfig) -> None:
+    try:
+        with open_db(config.data_dir) as con:
+            con.execute("DELETE FROM signals WHERE rule_id = ?", (rule_id,))
+        logger.info("Deleted signals for deprecated rule %s", rule_id)
+    except Exception:
+        logger.warning("Could not delete signals for rule %s", rule_id, exc_info=True)
 
 
 def _commit_and_push(rule_id: str, function_name: str) -> None:
