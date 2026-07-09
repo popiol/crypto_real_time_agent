@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_05_fft_cycle.v2 as rule_05_fft_cycle_v2
+import src.strategy.rules.rule_19_volume_price_divergence_with_t.v1 as rule_19_volume_price_divergence_with_t_v1
 import src.strategy.rules.rule_18_adaptive_moving_average_crosso.v1 as rule_18_adaptive_moving_average_crosso_v1
 import src.strategy.rules.rule_17_macd_crossover_with_adx_trend_.v1 as rule_17_macd_crossover_with_adx_trend__v1
 import src.strategy.rules.rule_16_rsi_divergence_with_moving_ave.v1 as rule_16_rsi_divergence_with_moving_ave_v1
@@ -39,6 +40,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_16_rsi_divergence_with_moving_ave_v1,
     rule_17_macd_crossover_with_adx_trend__v1,
     rule_18_adaptive_moving_average_crosso_v1,
+    rule_19_volume_price_divergence_with_t_v1,
 ]
 
 
