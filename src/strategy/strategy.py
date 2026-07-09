@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
 import src.strategy.rules.rule_14_rsi_mid_range_crossover_for_fr.v1 as rule_14_rsi_mid_range_crossover_for_fr_v1
 import src.strategy.rules.rule_08_roc_momentum.v2 as rule_08_roc_momentum_v2
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
@@ -54,6 +55,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v2,
     rule_08_roc_momentum_v2,
     rule_14_rsi_mid_range_crossover_for_fr_v1,
+    rule_02_bollinger_band_v3,
 ]
 
 
