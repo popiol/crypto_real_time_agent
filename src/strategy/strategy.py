@@ -14,40 +14,27 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
-import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
 import src.strategy.rules.rule_05_fft_cycle.v2 as rule_05_fft_cycle_v2
+import src.strategy.rules.rule_12_lead_lag.v5 as rule_12_lead_lag_v5
 import src.strategy.rules.rule_12_lead_lag.v4 as rule_12_lead_lag_v4
 import src.strategy.rules.rule_12_lead_lag.v3 as rule_12_lead_lag_v3
 import src.strategy.rules.rule_12_lead_lag.v2 as rule_12_lead_lag_v2
 import src.strategy.rules.rule_14_keltner_channel_reversion_with.v1 as rule_14_keltner_channel_reversion_with_v1
 import src.strategy.rules.rule_13_adaptive_channel_mean_reversio.v1 as rule_13_adaptive_channel_mean_reversio_v1
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
-import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
 import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
 import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
-import src.strategy.rules.rule_06_kalman_velocity.v1 as rule_06_kalman_velocity_v1
-import src.strategy.rules.rule_07_order_book_imbalance.v1 as rule_07_order_book_imbalance_v1
-import src.strategy.rules.rule_08_roc_momentum.v1 as rule_08_roc_momentum_v1
 import src.strategy.rules.rule_09_markov_chain.v1 as rule_09_markov_chain_v1
-import src.strategy.rules.rule_10_cnn_forecast.v1 as rule_10_cnn_forecast_v1
-import src.strategy.rules.rule_11_dqn_agent.v1 as rule_11_dqn_agent_v1
 import src.strategy.rules.rule_12_lead_lag.v1 as rule_12_lead_lag_v1
 from src.agent.models import MarketData, BuySignal, SellSignal
 
 Signal = BuySignal | SellSignal
 
 ACTIVE_RULES: list[ModuleType] = [
-    rule_01_spread_compression_v1,
     rule_02_bollinger_band_v1,
-    rule_03_ou_spread_v1,
     rule_04_arima_forecast_v1,
     rule_05_fft_cycle_v1,
-    rule_06_kalman_velocity_v1,
-    rule_07_order_book_imbalance_v1,
-    rule_08_roc_momentum_v1,
     rule_09_markov_chain_v1,
-    rule_10_cnn_forecast_v1,
-    rule_11_dqn_agent_v1,
     rule_12_lead_lag_v1,
     rule_13_adaptive_channel_mean_reversio_v1,
     rule_14_keltner_channel_reversion_with_v1,
@@ -55,6 +42,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_12_lead_lag_v3,
     rule_12_lead_lag_v4,
     rule_05_fft_cycle_v2,
+    rule_12_lead_lag_v5,
 ]
 
 
