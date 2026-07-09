@@ -31,7 +31,7 @@ def _get_files(data_dir: str) -> list[Path]:
     if _files is None:
         _files = sorted(
             p for p in Path(data_dir).rglob("*.json") if "_bidask" not in p.stem
-        )[-700:]
+        )
         logger.info("Backtest: %d snapshot files found in %s", len(_files), data_dir)
     return _files
 
@@ -47,8 +47,18 @@ def _load_order_books(ticker_path: Path) -> dict[str, OrderBook]:
     result: dict[str, OrderBook] = {}
     for pair, ob in raw.items():
         try:
-            asks = [OrderBookLevel(price=float(e[0]), volume=float(e[1]), timestamp=int(e[2])) for e in ob["asks"]]
-            bids = [OrderBookLevel(price=float(e[0]), volume=float(e[1]), timestamp=int(e[2])) for e in ob["bids"]]
+            asks = [
+                OrderBookLevel(
+                    price=float(e[0]), volume=float(e[1]), timestamp=int(e[2])
+                )
+                for e in ob["asks"]
+            ]
+            bids = [
+                OrderBookLevel(
+                    price=float(e[0]), volume=float(e[1]), timestamp=int(e[2])
+                )
+                for e in ob["bids"]
+            ]
             result[pair] = OrderBook(asks=asks, bids=bids)
         except (KeyError, IndexError, ValueError):
             continue
