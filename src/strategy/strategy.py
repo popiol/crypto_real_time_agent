@@ -14,44 +14,47 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
-import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_04_arima_forecast.v2 as rule_04_arima_forecast_v2
+import src.strategy.rules.rule_12_lead_lag.v6 as rule_12_lead_lag_v6
+import src.strategy.rules.rule_25_dynamic_support_resistance_wit.v1 as rule_25_dynamic_support_resistance_wit_v1
+import src.strategy.rules.rule_05_fft_cycle.v6 as rule_05_fft_cycle_v6
+import src.strategy.rules.rule_24_adx_filtered_moving_average_cr.v1 as rule_24_adx_filtered_moving_average_cr_v1
+import src.strategy.rules.rule_22_triple_moving_average_crossove.v2 as rule_22_triple_moving_average_crossove_v2
+import src.strategy.rules.rule_21_keltner_channel_breakout_with_.v2 as rule_21_keltner_channel_breakout_with__v2
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
-import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
 import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
 import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
-import src.strategy.rules.rule_06_kalman_velocity.v1 as rule_06_kalman_velocity_v1
-import src.strategy.rules.rule_07_order_book_imbalance.v1 as rule_07_order_book_imbalance_v1
-import src.strategy.rules.rule_08_roc_momentum.v1 as rule_08_roc_momentum_v1
 import src.strategy.rules.rule_09_markov_chain.v1 as rule_09_markov_chain_v1
-import src.strategy.rules.rule_10_cnn_forecast.v1 as rule_10_cnn_forecast_v1
-import src.strategy.rules.rule_11_dqn_agent.v1 as rule_11_dqn_agent_v1
 import src.strategy.rules.rule_12_lead_lag.v1 as rule_12_lead_lag_v1
-from src.agent.models import BuySignal, PairData, SellSignal
+from src.agent.models import MarketData, BuySignal, SellSignal
 
-MarketData = dict[str, PairData]
 Signal = BuySignal | SellSignal
 
 ACTIVE_RULES: list[ModuleType] = [
-    rule_01_spread_compression_v1,
     rule_02_bollinger_band_v1,
-    rule_03_ou_spread_v1,
     rule_04_arima_forecast_v1,
     rule_05_fft_cycle_v1,
-    rule_06_kalman_velocity_v1,
-    rule_07_order_book_imbalance_v1,
-    rule_08_roc_momentum_v1,
     rule_09_markov_chain_v1,
-    rule_10_cnn_forecast_v1,
-    rule_11_dqn_agent_v1,
     rule_12_lead_lag_v1,
+    rule_04_arima_forecast_v2,
+    rule_21_keltner_channel_breakout_with__v2,
+    rule_22_triple_moving_average_crossove_v2,
+    rule_24_adx_filtered_moving_average_cr_v1,
+    rule_05_fft_cycle_v6,
+    rule_25_dynamic_support_resistance_wit_v1,
+    rule_12_lead_lag_v6,
 ]
 
 
 def find_signals(data: MarketData) -> list[Signal]:
     signals: list[Signal] = []
     for rule in ACTIVE_RULES:
+        parts = rule.__name__.split(".")
+        rule_id = f"{parts[-2]}_{parts[-1]}"
         try:
-            signals.extend(rule.signal(data))
+            for signal in rule.signal(data):
+                signal.rule_id = rule_id
+                signals.append(signal)
         except Exception:  # noqa: BLE001
             logging.exception("Rule %s raised an exception", rule.__name__)
     return signals

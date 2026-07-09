@@ -2,10 +2,12 @@
 
 Reads historical Ticker snapshots from backtest_data_dir, which contains files
 partitioned as year=YYYY/month=MM/day=DD/YYYYMMDDHHmmss.json. Each file is a
-Kraken Ticker API response keyed by pair altname.
+Kraken Ticker API response keyed by pair altname. A companion *_bidask.json
+file at the same timestamp, if present, provides order book depth data.
 
-next_snapshot() advances a module-level cursor through the files in chronological
-order, returning one batch of Tick objects per call. Returns None when exhausted.
+next_snapshot() advances a module-level cursor through the ticker files in
+chronological order, returning one batch of Tick objects per call. Returns
+None when exhausted.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.agent.collector import _find_key
-from src.agent.models import AppConfig, Tick
+from src.agent.models import AppConfig, OrderBook, OrderBookLevel, Tick
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +29,30 @@ _cursor: int = 0
 def _get_files(data_dir: str) -> list[Path]:
     global _files
     if _files is None:
-        _files = sorted(Path(data_dir).rglob("*.json"))
+        _files = sorted(
+            p for p in Path(data_dir).rglob("*.json") if "_bidask" not in p.stem
+        )[-700:]
         logger.info("Backtest: %d snapshot files found in %s", len(_files), data_dir)
     return _files
+
+
+def _load_order_books(ticker_path: Path) -> dict[str, OrderBook]:
+    bidask_path = ticker_path.with_stem(ticker_path.stem + "_bidask")
+    if not bidask_path.exists():
+        return {}
+    try:
+        raw: dict = json.loads(bidask_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    result: dict[str, OrderBook] = {}
+    for pair, ob in raw.items():
+        try:
+            asks = [OrderBookLevel(price=float(e[0]), volume=float(e[1]), timestamp=int(e[2])) for e in ob["asks"]]
+            bids = [OrderBookLevel(price=float(e[0]), volume=float(e[1]), timestamp=int(e[2])) for e in ob["bids"]]
+            result[pair] = OrderBook(asks=asks, bids=bids)
+        except (KeyError, IndexError, ValueError):
+            continue
+    return result
 
 
 def next_snapshot(config: AppConfig) -> list[Tick] | None:
@@ -44,7 +67,7 @@ def next_snapshot(config: AppConfig) -> list[Tick] | None:
     _cursor += 1
 
     try:
-        polled_at = datetime.strptime(path.stem, "%Y%m%d%H%M%S").replace(
+        polled_at = datetime.strptime(path.stem[:14], "%Y%m%d%H%M%S").replace(
             tzinfo=timezone.utc
         )
     except ValueError:
@@ -57,6 +80,7 @@ def next_snapshot(config: AppConfig) -> list[Tick] | None:
         logger.warning("Failed to read %s: %s", path, exc)
         return []
 
+    order_books = _load_order_books(path)
     pair_names = config.pairs if config.pairs else list(ticker_result.keys())
 
     ticks: list[Tick] = []
@@ -92,6 +116,7 @@ def next_snapshot(config: AppConfig) -> list[Tick] | None:
                 mid_price=mid_price,
                 spread_abs=spread_abs,
                 spread_rel=spread_rel,
+                order_book=order_books.get(altname) or order_books.get(key),
             )
         )
 
