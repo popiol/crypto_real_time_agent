@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_12_lead_lag.v4 as rule_12_lead_lag_v4
 import src.strategy.rules.rule_12_lead_lag.v3 as rule_12_lead_lag_v3
 import src.strategy.rules.rule_12_lead_lag.v2 as rule_12_lead_lag_v2
 import src.strategy.rules.rule_14_keltner_channel_reversion_with.v1 as rule_14_keltner_channel_reversion_with_v1
@@ -51,6 +52,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_14_keltner_channel_reversion_with_v1,
     rule_12_lead_lag_v2,
     rule_12_lead_lag_v3,
+    rule_12_lead_lag_v4,
 ]
 
 
