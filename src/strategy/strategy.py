@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_04_arima_forecast.v2 as rule_04_arima_forecast_v2
+import src.strategy.rules.rule_12_lead_lag.v6 as rule_12_lead_lag_v6
 import src.strategy.rules.rule_25_dynamic_support_resistance_wit.v1 as rule_25_dynamic_support_resistance_wit_v1
 import src.strategy.rules.rule_05_fft_cycle.v6 as rule_05_fft_cycle_v6
 import src.strategy.rules.rule_24_adx_filtered_moving_average_cr.v1 as rule_24_adx_filtered_moving_average_cr_v1
@@ -41,6 +42,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_24_adx_filtered_moving_average_cr_v1,
     rule_05_fft_cycle_v6,
     rule_25_dynamic_support_resistance_wit_v1,
+    rule_12_lead_lag_v6,
 ]
 
 
