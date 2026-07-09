@@ -13,7 +13,7 @@ backoff_initial_seconds: 2
 backoff_max_seconds: 60
 
 # LLM
-llm_model: gemini-2.5-flash # gemini-2.5-flash, claude-cli
+llm_model: claude-cli # gemini-2.5-flash, claude-cli
 
 # Rule scoring
 rule_min_signals: 20          # signals required before a rule can be scored
