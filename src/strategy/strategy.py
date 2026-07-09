@@ -15,12 +15,9 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_05_fft_cycle.v2 as rule_05_fft_cycle_v2
+import src.strategy.rules.rule_17_macd_crossover_with_adx_trend_.v1 as rule_17_macd_crossover_with_adx_trend__v1
 import src.strategy.rules.rule_16_rsi_divergence_with_moving_ave.v1 as rule_16_rsi_divergence_with_moving_ave_v1
 import src.strategy.rules.rule_15_adx_trend_strength_with_ema_cr.v1 as rule_15_adx_trend_strength_with_ema_cr_v1
-import src.strategy.rules.rule_12_lead_lag.v5 as rule_12_lead_lag_v5
-import src.strategy.rules.rule_12_lead_lag.v4 as rule_12_lead_lag_v4
-import src.strategy.rules.rule_12_lead_lag.v3 as rule_12_lead_lag_v3
-import src.strategy.rules.rule_12_lead_lag.v2 as rule_12_lead_lag_v2
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
 import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
@@ -36,13 +33,10 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_05_fft_cycle_v1,
     rule_09_markov_chain_v1,
     rule_12_lead_lag_v1,
-    rule_12_lead_lag_v2,
-    rule_12_lead_lag_v3,
-    rule_12_lead_lag_v4,
     rule_05_fft_cycle_v2,
-    rule_12_lead_lag_v5,
     rule_15_adx_trend_strength_with_ema_cr_v1,
     rule_16_rsi_divergence_with_moving_ave_v1,
+    rule_17_macd_crossover_with_adx_trend__v1,
 ]
 
 
