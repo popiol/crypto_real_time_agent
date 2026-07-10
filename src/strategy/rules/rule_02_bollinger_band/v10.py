@@ -1,75 +1,101 @@
 from __future__ import annotations
-
 import numpy as np
-
 from src.agent.models import BuySignal, MarketData, SellSignal
 
+# --- Parameters for Bollinger Bands ---
+BB_PERIOD = 20  # Period for Simple Moving Average (SMA)
+BASE_STD_DEV_MULTIPLIER = 2.0  # Default multiplier for average volatility
+VOLATILITY_PERIOD = 20  # Period for calculating current BB std dev
+LONG_TERM_VOLATILITY_LOOKBACK = 60  # Period to assess market's general volatility regime
+VOLATILITY_SENSITIVITY = 0.5  # How much the multiplier changes per unit of volatility deviation
 
-# Parameters
-N_BB = 20  # Bollinger Band period (number of ticks)
-K_BB = 2.0  # Bollinger Band standard deviation multiplier
-N_MA_Trend = 200  # Long-term Moving Average period for trend filter (number of ticks)
+# Optional: Clamp ADAPTIVE_MULTIPLIER to a sensible range
+MIN_MULTIPLIER = 1.5
+MAX_MULTIPLIER = 3.0
 
-# Minimum data points required for calculations.
-# This must be at least the largest period used (N_MA_Trend).
-MIN_TICKS = max(N_BB, N_MA_Trend)
+# Minimum number of warm candles required for calculations.
+# To calculate AVERAGE_BB_STD_DEV for the current point, we need:
+# 1. VOLATILITY_PERIOD candles to get the current BB_STD_DEV.
+# 2. LONG_TERM_VOLATILITY_LOOKBACK previous BB_STD_DEV values.
+# This means the earliest candle needed is `VOLATILITY_PERIOD + LONG_TERM_VOLATILITY_LOOKBACK - 1` periods ago.
+MIN_CANDLES = VOLATILITY_PERIOD + LONG_TERM_VOLATILITY_LOOKBACK - 1
+# Ensure BB_PERIOD is also covered, though typically it will be smaller than MIN_CANDLES
+MIN_CANDLES = max(MIN_CANDLES, BB_PERIOD)
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
-    """
-    Implements a Bollinger Band Mean Reversion strategy with a trend filter.
-
-    It emits a Buy signal when the price drops below the lower Bollinger Band
-    AND the longer-term trend (defined by a N_MA_Trend-period SMA) is upward
-    (current price > LongTermMA).
-    It emits a Sell signal when the price rises above the upper Bollinger Band
-    AND the longer-term trend is downward (current price < LongTermMA).
-
-    This rule uses `last_price` from `hot` (tick) data for calculations to
-    accommodate the `N_MA_Trend = 200` period, as `warm` (hourly candle) data
-    typically does not provide enough historical depth for such a long period.
-    """
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
-        # Ensure we have enough tick data for both BB and trend MA calculations
-        if not pair_data.hot or len(pair_data.hot) < MIN_TICKS:
+        # Ensure we have enough warm candles for all lookback periods
+        if len(pair_data.warm) < MIN_CANDLES:
+            continue
+        # Ensure we have recent tick data for current price and timestamp
+        if not pair_data.hot:
             continue
 
-        # Extract closing prices (last_price) from the hot (tick) data
-        # We need the most recent `MIN_TICKS` for calculations.
-        closes = np.array([t.last_price for t in pair_data.hot[-MIN_TICKS:]], dtype=float)
-        current_price = closes[-1]
+        # Convert warm candle closes to a numpy array for efficient calculations
+        closes = np.array([c.close for c in pair_data.warm])
+
+        # --- Calculate Simple Moving Average (SMA) for the band center ---
+        # SMA is based on BB_PERIOD, using the most recent candles
+        sma = np.mean(closes[-BB_PERIOD:])
+
+        # --- Calculate the standard deviation for the Bollinger Bands (current volatility) ---
+        # This is based on VOLATILITY_PERIOD, using the most recent candles
+        bb_std_dev_current = np.std(closes[-VOLATILITY_PERIOD:])
+
+        # If current std dev is zero (e.g., flat price for the period), bands collapse to SMA.
+        # In such a scenario, no price can cross the bands, so we skip signal generation.
+        if bb_std_dev_current == 0:
+            continue
+
+        # --- Calculate a longer-term average of the standard deviation to determine the volatility 'baseline' ---
+        # We need a series of BB_STD_DEV values over LONG_TERM_VOLATILITY_LOOKBACK periods.
+        # Iterate backwards from the most recent point (i=0) up to LONG_TERM_VOLATILITY_LOOKBACK periods ago.
+        std_dev_history = []
+        num_closes = len(closes)
+        for i in range(LONG_TERM_VOLATILITY_LOOKBACK):
+            # The window for the i-th previous standard deviation ends at `num_closes - i`.
+            # The window starts at `num_closes - i - VOLATILITY_PERIOD`.
+            window_start = num_closes - i - VOLATILITY_PERIOD
+            window_end = num_closes - i
+            
+            # This check is technically redundant due to MIN_CANDLES, but adds robustness.
+            if window_start < 0:
+                break 
+            
+            std_dev_history.append(np.std(closes[window_start:window_end]))
+        
+        # Calculate the average of these historical standard deviations.
+        # If std_dev_history is empty (shouldn't happen with correct MIN_CANDLES), fallback.
+        if not std_dev_history:
+            average_bb_std_dev = 0
+        else:
+            average_bb_std_dev = np.mean(std_dev_history)
+
+        # --- Determine the adaptive multiplier ---
+        adaptive_multiplier = BASE_STD_DEV_MULTIPLIER
+        if average_bb_std_dev > 0:
+            volatility_ratio = bb_std_dev_current / average_bb_std_dev
+            adaptive_multiplier = BASE_STD_DEV_MULTIPLIER * (1 + (volatility_ratio - 1) * VOLATILITY_SENSITIVITY)
+        # else: adaptive_multiplier remains BASE_STD_DEV_MULTIPLIER as initialized
+
+        # Clamp ADAPTIVE_MULTIPLIER to a sensible range
+        adaptive_multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, adaptive_multiplier))
+
+        # --- Calculate Upper and Lower Bollinger Bands ---
+        upper_band = sma + (adaptive_multiplier * bb_std_dev_current)
+        lower_band = sma - (adaptive_multiplier * bb_std_dev_current)
+
+        # --- Generate signals ---
+        # The current price is the last_price from the most recent tick in hot data
+        current_price = pair_data.hot[-1].last_price
         ts = pair_data.hot[-1].polled_at
 
-        # Calculate Bollinger Bands (N_BB period)
-        # We use the last N_BB prices for the Bollinger Band calculations.
-        bb_segment = closes[-N_BB:]
-        bb_mean = np.mean(bb_segment)
-        bb_std = np.std(bb_segment)
-
-        # Avoid division by zero or nonsensical bands if std dev is zero
-        if bb_std == 0:
-            continue
-
-        upper_band = bb_mean + (K_BB * bb_std)
-        lower_band = bb_mean - (K_BB * bb_std)
-
-        # Calculate Long-term Trend MA (N_MA_Trend period)
-        # We use the last N_MA_Trend prices for the Long-term MA.
-        trend_ma_segment = closes[-N_MA_Trend:]
-        long_term_ma = np.mean(trend_ma_segment)
-
-        # Generate Signals based on Bollinger Bands and Trend Filter
-        # Buy Signal: Price below lower band AND current price is above long-term MA (upward trend)
-        if current_price < lower_band and current_price > long_term_ma:
-            signals.append(
-                BuySignal(pair=pair, timestamp=ts, price=current_price)
-            )
-        # Sell Signal: Price above upper band AND current price is below long-term MA (downward trend)
-        elif current_price > upper_band and current_price < long_term_ma:
-            signals.append(
-                SellSignal(pair=pair, timestamp=ts, price=current_price)
-            )
+        if current_price < lower_band:
+            signals.append(BuySignal(pair=pair, timestamp=ts, price=current_price))
+        elif current_price > upper_band:
+            signals.append(SellSignal(pair=pair, timestamp=ts, price=current_price))
 
     return signals
