@@ -1,101 +1,82 @@
+"""Rule 15afb274-c4f0-45d0-b1d6-ba124e77b3d7 — Bollinger Band Breakout with Volume Confirmation."""
 from __future__ import annotations
-import numpy as np
-from src.agent.models import BuySignal, MarketData, SellSignal
+import statistics
+from src.agent.models import BuySignal, MarketData, PairData, SellSignal
 
-# --- Parameters for Bollinger Bands ---
-BB_PERIOD = 20  # Period for Simple Moving Average (SMA)
-BASE_STD_DEV_MULTIPLIER = 2.0  # Default multiplier for average volatility
-VOLATILITY_PERIOD = 20  # Period for calculating current BB std dev
-LONG_TERM_VOLATILITY_LOOKBACK = 60  # Period to assess market's general volatility regime
-VOLATILITY_SENSITIVITY = 0.5  # How much the multiplier changes per unit of volatility deviation
+# Constants for Bollinger Bands calculation
+N_BB_PERIODS = 10  # Number of periods for Bollinger Band SMA and STD (using warm candles)
+K = 2.0            # Multiplier for Standard Deviation to define bands
 
-# Optional: Clamp ADAPTIVE_MULTIPLIER to a sensible range
-MIN_MULTIPLIER = 1.5
-MAX_MULTIPLIER = 3.0
+# Constants for Volume Confirmation
+M_VOLUME_SMA_PERIODS = 30 # Number of periods for Volume SMA (using hot ticks)
+VOLUME_MULTIPLIER = 1.5   # Multiplier for average volume to confirm breakout (e.g., 1.5 means 50% higher than average)
 
-# Minimum number of warm candles required for calculations.
-# To calculate AVERAGE_BB_STD_DEV for the current point, we need:
-# 1. VOLATILITY_PERIOD candles to get the current BB_STD_DEV.
-# 2. LONG_TERM_VOLATILITY_LOOKBACK previous BB_STD_DEV values.
-# This means the earliest candle needed is `VOLATILITY_PERIOD + LONG_TERM_VOLATILITY_LOOKBACK - 1` periods ago.
-MIN_CANDLES = VOLATILITY_PERIOD + LONG_TERM_VOLATILITY_LOOKBACK - 1
-# Ensure BB_PERIOD is also covered, though typically it will be smaller than MIN_CANDLES
-MIN_CANDLES = max(MIN_CANDLES, BB_PERIOD)
+# Minimum data requirements
+# We need at least N_BB_PERIODS warm candles for Bollinger Bands
+# And at least M_VOLUME_SMA_PERIODS hot ticks for volume SMA and current tick data
+MIN_CANDLES_FOR_BB = N_BB_PERIODS
+MIN_TICKS_FOR_VOLUME_SMA = M_VOLUME_SMA_PERIODS
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
-        # Ensure we have enough warm candles for all lookback periods
-        if len(pair_data.warm) < MIN_CANDLES:
-            continue
-        # Ensure we have recent tick data for current price and timestamp
-        if not pair_data.hot:
+        # Ensure sufficient warm candle data for Bollinger Bands calculation
+        if len(pair_data.warm) < MIN_CANDLES_FOR_BB:
             continue
 
-        # Convert warm candle closes to a numpy array for efficient calculations
-        closes = np.array([c.close for c in pair_data.warm])
-
-        # --- Calculate Simple Moving Average (SMA) for the band center ---
-        # SMA is based on BB_PERIOD, using the most recent candles
-        sma = np.mean(closes[-BB_PERIOD:])
-
-        # --- Calculate the standard deviation for the Bollinger Bands (current volatility) ---
-        # This is based on VOLATILITY_PERIOD, using the most recent candles
-        bb_std_dev_current = np.std(closes[-VOLATILITY_PERIOD:])
-
-        # If current std dev is zero (e.g., flat price for the period), bands collapse to SMA.
-        # In such a scenario, no price can cross the bands, so we skip signal generation.
-        if bb_std_dev_current == 0:
+        # Ensure sufficient hot tick data for current price, timestamp, and volume SMA calculation
+        if len(pair_data.hot) < MIN_TICKS_FOR_VOLUME_SMA:
             continue
 
-        # --- Calculate a longer-term average of the standard deviation to determine the volatility 'baseline' ---
-        # We need a series of BB_STD_DEV values over LONG_TERM_VOLATILITY_LOOKBACK periods.
-        # Iterate backwards from the most recent point (i=0) up to LONG_TERM_VOLATILITY_LOOKBACK periods ago.
-        std_dev_history = []
-        num_closes = len(closes)
-        for i in range(LONG_TERM_VOLATILITY_LOOKBACK):
-            # The window for the i-th previous standard deviation ends at `num_closes - i`.
-            # The window starts at `num_closes - i - VOLATILITY_PERIOD`.
-            window_start = num_closes - i - VOLATILITY_PERIOD
-            window_end = num_closes - i
-            
-            # This check is technically redundant due to MIN_CANDLES, but adds robustness.
-            if window_start < 0:
-                break 
-            
-            std_dev_history.append(np.std(closes[window_start:window_end]))
+        # 1. Calculate Bollinger Bands using closing prices from warm candles
+        # Use the most recent N_BB_PERIODS warm candles
+        bb_closes = [c.close for c in pair_data.warm[-N_BB_PERIODS:]]
         
-        # Calculate the average of these historical standard deviations.
-        # If std_dev_history is empty (shouldn't happen with correct MIN_CANDLES), fallback.
-        if not std_dev_history:
-            average_bb_std_dev = 0
-        else:
-            average_bb_std_dev = np.mean(std_dev_history)
+        # Calculate Simple Moving Average (SMA) of closing prices
+        bb_mean = statistics.mean(bb_closes)
+        # Calculate Standard Deviation (STD) of closing prices
+        bb_std = statistics.stdev(bb_closes)
 
-        # --- Determine the adaptive multiplier ---
-        adaptive_multiplier = BASE_STD_DEV_MULTIPLIER
-        if average_bb_std_dev > 0:
-            volatility_ratio = bb_std_dev_current / average_bb_std_dev
-            adaptive_multiplier = BASE_STD_DEV_MULTIPLIER * (1 + (volatility_ratio - 1) * VOLATILITY_SENSITIVITY)
-        # else: adaptive_multiplier remains BASE_STD_DEV_MULTIPLIER as initialized
+        # If standard deviation is zero, prices have not moved, bands are flat.
+        # No meaningful breakout can occur, so skip this pair.
+        if bb_std == 0:
+            continue
 
-        # Clamp ADAPTIVE_MULTIPLIER to a sensible range
-        adaptive_multiplier = max(MIN_MULTIPLIER, min(MAX_MULTIPLIER, adaptive_multiplier))
+        # Calculate Upper and Lower Bollinger Bands
+        upper_bollinger_band = bb_mean + (K * bb_std)
+        lower_bollinger_band = bb_mean - (K * bb_std)
 
-        # --- Calculate Upper and Lower Bollinger Bands ---
-        upper_band = sma + (adaptive_multiplier * bb_std_dev_current)
-        lower_band = sma - (adaptive_multiplier * bb_std_dev_current)
+        # 2. Calculate Simple Moving Average of Volume using 'volume_24h' from hot ticks
+        # Use the most recent M_VOLUME_SMA_PERIODS hot ticks for volume average
+        volume_24h_values = [t.volume_24h for t in pair_data.hot[-M_VOLUME_SMA_PERIODS:]]
+        
+        # Calculate SMA of the 24-hour rolling volume
+        sma_volume = statistics.mean(volume_24h_values)
 
-        # --- Generate signals ---
-        # The current price is the last_price from the most recent tick in hot data
-        current_price = pair_data.hot[-1].last_price
-        ts = pair_data.hot[-1].polled_at
+        # If average volume is zero, no meaningful volume confirmation can occur.
+        # This might indicate an inactive pair or data issues.
+        if sma_volume == 0:
+            continue
+            
+        # 3. Get current market data from the most recent tick
+        current_tick = pair_data.hot[-1]
+        current_price = current_tick.last_price
+        current_volume_24h = current_tick.volume_24h
+        timestamp = current_tick.polled_at
 
-        if current_price < lower_band:
-            signals.append(BuySignal(pair=pair, timestamp=ts, price=current_price))
-        elif current_price > upper_band:
-            signals.append(SellSignal(pair=pair, timestamp=ts, price=current_price))
+        # 4. Emit Signals based on Bollinger Band breakout with Volume Confirmation
+        # Buy signal: Current price drops below the Lower Bollinger Band
+        # AND current 24-hour volume is significantly higher than its recent average.
+        if current_price < lower_bollinger_band and \
+           current_volume_24h > (VOLUME_MULTIPLIER * sma_volume):
+            signals.append(BuySignal(pair=pair, timestamp=timestamp, price=current_price))
+        
+        # Sell signal: Current price rises above the Upper Bollinger Band
+        # AND current 24-hour volume is significantly higher than its recent average.
+        elif current_price > upper_bollinger_band and \
+             current_volume_24h > (VOLUME_MULTIPLIER * sma_volume):
+            signals.append(SellSignal(pair=pair, timestamp=timestamp, price=current_price))
 
     return signals
