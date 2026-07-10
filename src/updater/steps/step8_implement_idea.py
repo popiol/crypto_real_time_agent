@@ -64,7 +64,6 @@ _STRATEGY_FILE = Path("src/strategy/strategy.py")
 _IMPLEMENT_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
     "Generate a complete, self-contained Python module that implements the described rule. "
-    "The output must be real, executable Python code — NOT pseudocode. "
     "Return ONLY the raw Python source code — no explanation, no markdown, no code fences."
 )
 
