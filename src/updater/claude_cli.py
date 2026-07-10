@@ -7,8 +7,6 @@ Requires the `claude` binary on PATH, authenticated via OAuth.
 Does NOT require ANTHROPIC_API_KEY — do not add --bare, which blocks OAuth.
 """
 
-from __future__ import annotations
-
 import json
 import subprocess
 from typing import Generic, TypeVar
