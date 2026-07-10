@@ -158,6 +158,7 @@ def _score(
             signal_count=0,
             evaluation_days=0,
             avg_gain_pct=0.0,
+            recent_avg_gain_pct=0.0,
             positive_rate=0.0,
             avg_gain_24h=0.0,
             max_gain_24h=0.0,
@@ -166,9 +167,22 @@ def _score(
             zero_signal_cycles=zero_signal_cycles,
         )
 
+    from datetime import datetime, timedelta, timezone
+
+    def _parse(ts) -> datetime:
+        if isinstance(ts, datetime):
+            return ts.replace(tzinfo=timezone.utc) if ts.tzinfo is None else ts
+        dt = datetime.fromisoformat(str(ts))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
     gains_pct = [s["outcome"]["gain_pct"] for s in matching]
     avg_gain_pct = sum(gains_pct) / len(gains_pct)
     positive_rate = sum(1 for g in gains_pct if g > 0) / len(gains_pct)
+
+    cutoff_48h = datetime.now(timezone.utc) - timedelta(hours=48)
+    recent = [s for s in matching if s.get("emitted_at") and _parse(s["emitted_at"]) >= cutoff_48h]
+    recent_gains = [s["outcome"]["gain_pct"] for s in recent]
+    recent_avg_gain_pct = sum(recent_gains) / len(recent_gains) if recent_gains else 0.0
 
     with_24h = [s["outcome"] for s in matching if "gain_24h_pct" in s["outcome"]]
     avg_gain_24h = sum(o["gain_24h_pct"] for o in with_24h) / len(with_24h) if with_24h else 0.0
@@ -178,11 +192,6 @@ def _score(
     timestamps = [s["emitted_at"] for s in matching if s.get("emitted_at")]
     evaluation_days = 0
     if len(timestamps) >= 2:
-        from datetime import datetime
-        def _parse(ts) -> datetime:
-            if isinstance(ts, datetime):
-                return ts
-            return datetime.fromisoformat(str(ts))
         evaluation_days = (_parse(max(timestamps)) - _parse(min(timestamps))).days
 
     # Score: avg_gain_pct normalised to [0,1] where 0 = -10%, 0.5 = 0%, 1.0 = +10%
@@ -208,6 +217,7 @@ def _score(
         signal_count=signal_count,
         evaluation_days=evaluation_days,
         avg_gain_pct=avg_gain_pct,
+        recent_avg_gain_pct=recent_avg_gain_pct,
         positive_rate=positive_rate,
         avg_gain_24h=avg_gain_24h,
         max_gain_24h=max_gain_24h,

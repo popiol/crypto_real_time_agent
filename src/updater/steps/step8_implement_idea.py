@@ -415,26 +415,28 @@ def _register_rule(strategy_path: Path, rule_id: str) -> None:
     import_path = _rule_id_to_import_path(rule_id)
     import_line = f"import src.strategy.rules.{import_path} as {rule_id}"
 
-    last_import = re.search(
-        r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
-    )
-    if last_import:
-        content = (
-            content[: last_import.end()]
-            + "\n"
-            + import_line
-            + content[last_import.end() :]
+    if import_line not in content:
+        last_import = re.search(
+            r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
         )
-    else:
-        content = import_line + "\n" + content
+        if last_import:
+            content = (
+                content[: last_import.end()]
+                + "\n"
+                + import_line
+                + content[last_import.end() :]
+            )
+        else:
+            content = import_line + "\n" + content
 
-    content = re.sub(
-        r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
-        rf"\1\2\n    {rule_id},\3",
-        content,
-        count=1,
-        flags=re.DOTALL,
-    )
+    if f"    {rule_id}," not in content:
+        content = re.sub(
+            r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
+            rf"\1\2\n    {rule_id},\3",
+            content,
+            count=1,
+            flags=re.DOTALL,
+        )
 
     strategy_path.write_text(content, encoding="utf-8")
     logger.info("Registered %s in strategy.py", rule_id)
