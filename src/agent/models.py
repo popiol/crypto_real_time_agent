@@ -114,3 +114,5 @@ class AppConfig(BaseModel):
         0.0  # deprecate mature rule at or below this avg gain
     )
     rule_zero_signal_max_cycles: int = 7  # deprecate a rule that emits 0 signals for this many consecutive analysis cycles
+    portfolio_initial_capital: float = 10000.0
+    portfolio_min_recent_gain: float = 0.005

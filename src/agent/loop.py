@@ -15,7 +15,7 @@ import sys
 import time
 import uuid
 
-from src.agent import collector, storage
+from src.agent import collector, portfolio as _portfolio, storage
 from src.agent.db import open_db
 from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
 import src.strategy.strategy as _strategy
@@ -93,7 +93,9 @@ def run(config: AppConfig) -> None:
         except Exception:
             logger.exception("Storage write failed")
 
-        persist_signals(run_strategy(ticks, config), config)
+        signals = run_strategy(ticks, config)
+        persist_signals(signals, config)
+        _portfolio.run_cycle(ticks, signals, config)
 
         elapsed = time.monotonic() - cycle_start
         sleep_for = max(0.0, config.min_poll_interval_seconds - elapsed)
