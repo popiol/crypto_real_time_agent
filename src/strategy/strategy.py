@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
+import src.strategy.rules.rule_17_arima_forecast_with_garch_mode.v1 as rule_17_arima_forecast_with_garch_mode_v1
 import src.strategy.rules.rule_16_seasonal_arima_sarima_forecast.v1 as rule_16_seasonal_arima_sarima_forecast_v1
 import src.strategy.rules.rule_02_bollinger_band.v10 as rule_02_bollinger_band_v10
 import src.strategy.rules.rule_04_arima_forecast.v7 as rule_04_arima_forecast_v7
@@ -45,6 +46,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_04_arima_forecast_v7,
     rule_02_bollinger_band_v10,
     rule_16_seasonal_arima_sarima_forecast_v1,
+    rule_17_arima_forecast_with_garch_mode_v1,
 ]
 
 
