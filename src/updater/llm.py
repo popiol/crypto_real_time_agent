@@ -17,14 +17,14 @@ For claude-cli the `claude` binary must be on PATH and authenticated.
 from __future__ import annotations
 
 import logging
-from typing import Generic, TypeVar
+from typing import TypeVar
 
 from dotenv import load_dotenv
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
-from src.updater.claude_cli import cli_call, cli_call_structured
+from src.updater.claude_cli import ClaudeCli, cli_call_structured
 
 load_dotenv(".env")
 
@@ -36,49 +36,9 @@ _MAX_TOKENS = 16384
 _REQUEST_TIMEOUT = 120
 
 
-# ── Claude CLI wrapper (duck-typed to match LangChain interface) ──────────────
-
-class _CliResponse:
-    def __init__(self, content: str) -> None:
-        self.content = content
-
-
-class _ClaudeCliStructured(Generic[T]):
-    def __init__(self, output_type: type[T]) -> None:
-        self._type = output_type
-
-    def invoke(self, messages: list) -> T:
-        system, user = _extract_messages(messages)
-        return cli_call_structured(system=system, user=user, output_type=self._type)
-
-
-class _ClaudeCli:
-    """Duck-typed wrapper that delegates to the claude CLI binary."""
-
-    def invoke(self, messages: list) -> _CliResponse:
-        system, user = _extract_messages(messages)
-        return _CliResponse(content=cli_call(system=system, user=user))
-
-    def with_structured_output(self, output_type: type[T]) -> _ClaudeCliStructured[T]:
-        return _ClaudeCliStructured(output_type)
-
-
-def _extract_messages(messages: list) -> tuple[str, str]:
-    system = ""
-    user = ""
-    for m in messages:
-        if isinstance(m, SystemMessage):
-            system = m.content if isinstance(m.content, str) else ""
-        elif isinstance(m, HumanMessage):
-            user = m.content if isinstance(m.content, str) else ""
-    return system, user
-
-
-# ── LangChain factory ─────────────────────────────────────────────────────────
-
-def make_llm(model: str) -> BaseChatModel | _ClaudeCli:
+def make_llm(model: str) -> BaseChatModel | ClaudeCli:
     if model == "claude-cli":
-        return _ClaudeCli()
+        return ClaudeCli()
     if model.startswith("gemini"):
         from langchain_google_genai import ChatGoogleGenerativeAI
 
