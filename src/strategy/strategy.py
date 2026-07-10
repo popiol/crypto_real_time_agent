@@ -15,7 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
-import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
+import src.strategy.rules.rule_16_market_regime_adaptive_strateg.v1 as rule_16_market_regime_adaptive_strateg_v1
 import src.strategy.rules.rule_15_volatility_adjusted_breakout_w.v1 as rule_15_volatility_adjusted_breakout_w_v1
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
 import src.strategy.rules.rule_14_volatility_adaptive_ema_crosso.v1 as rule_14_volatility_adaptive_ema_crosso_v1
@@ -52,7 +52,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_14_volatility_adaptive_ema_crosso_v1,
     rule_02_bollinger_band_v2,
     rule_15_volatility_adjusted_breakout_w_v1,
-    rule_02_bollinger_band_v3,
+    rule_16_market_regime_adaptive_strateg_v1,
 ]
 
 
