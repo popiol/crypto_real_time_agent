@@ -12,7 +12,7 @@ from pathlib import Path
 
 from src.agent.models import AppConfig
 from src.updater.llm import llm_structured
-from src.updater.models import Conclusions, LongTermPlan
+from src.updater.models import Conclusions, LongTermPlan, RuleEvaluation
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,17 @@ def run(config: AppConfig, state_dir: Path) -> None:
     conclusions = Conclusions.model_validate_json(
         conclusions_path.read_text(encoding="utf-8")
     )
+
+    rule_eval_text = "No rule evaluation available."
+    rule_eval_path = state_dir / "rule_evaluation.json"
+    if rule_eval_path.exists():
+        try:
+            rule_eval = RuleEvaluation.model_validate_json(
+                rule_eval_path.read_text(encoding="utf-8")
+            )
+            rule_eval_text = rule_eval.model_dump_json(indent=2)
+        except Exception:
+            pass
 
     existing_plan_text = "No existing plan."
     plan_path = state_dir / "long_term_plan.json"
@@ -41,9 +52,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
             "Maintain a clear, actionable long-term plan that guides rule development."
         ),
         user=(
-            "Revise the long-term strategy plan based on these new conclusions. "
-            "Keep what remains valid; update what the conclusions contradict or extend.\n\n"
-            f"New conclusions:\n{conclusions.model_dump_json(indent=2)}\n\n"
+            "Revise the long-term strategy plan based on the current rule performance and version conclusions.\n\n"
+            f"Rule evaluation:\n{rule_eval_text}\n\n"
+            f"Version conclusions (directions that failed and proposed alternatives):\n{conclusions.model_dump_json(indent=2)}\n\n"
             f"Current plan:\n{existing_plan_text}\n\n"
             f"Set updated_at to: {now_iso}"
         ),
