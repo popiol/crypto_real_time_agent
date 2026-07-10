@@ -50,6 +50,7 @@ class WarmCandle(BaseModel):
     low: float
     close: float
     avg_spread_rel: float = 0.0
+    volume: float = Field(default=0.0, description="Average volume_24h of ticks within this hour (proxy for relative market activity)")
 
 
 class ColdMonth(BaseModel):
