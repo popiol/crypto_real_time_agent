@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_14_volatility_adaptive_ema_crosso.v1 as rule_14_volatility_adaptive_ema_crosso_v1
 import src.strategy.rules.rule_13_adx_filtered_directional_trend.v1 as rule_13_adx_filtered_directional_trend_v1
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
@@ -45,6 +46,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_11_dqn_agent_v1,
     rule_12_lead_lag_v1,
     rule_13_adx_filtered_directional_trend_v1,
+    rule_14_volatility_adaptive_ema_crosso_v1,
 ]
 
 
