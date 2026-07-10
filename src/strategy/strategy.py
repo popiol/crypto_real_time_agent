@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
+import src.strategy.rules.rule_04_arima_forecast.v5 as rule_04_arima_forecast_v5
 import src.strategy.rules.rule_04_arima_forecast.v4 as rule_04_arima_forecast_v4
 import src.strategy.rules.rule_15_bollinger_band_reversal_with_c.v1 as rule_15_bollinger_band_reversal_with_c_v1
 import src.strategy.rules.rule_04_arima_forecast.v3 as rule_04_arima_forecast_v3
@@ -41,6 +42,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_04_arima_forecast_v3,
     rule_15_bollinger_band_reversal_with_c_v1,
     rule_04_arima_forecast_v4,
+    rule_04_arima_forecast_v5,
 ]
 
 
