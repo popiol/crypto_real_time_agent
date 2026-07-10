@@ -43,14 +43,13 @@ def _run(system: str, user: str, json_schema: str | None = None) -> str:
     cmd.append(user)
 
     result = subprocess.run(
-        cmd, capture_output=True, text=True, timeout=_TIMEOUT
+        cmd, capture_output=True, text=True, encoding="utf-8", timeout=_TIMEOUT
     )
     if result.returncode != 0:
-        raise RuntimeError(
-            f"claude CLI exited {result.returncode}: {result.stderr.strip()}"
-        )
+        stderr = (result.stderr or "").strip()
+        raise RuntimeError(f"claude CLI exited {result.returncode}: {stderr}")
 
-    stdout = result.stdout.strip()
+    stdout = (result.stdout or "").strip()
     if not stdout:
         raise RuntimeError("claude CLI returned empty output")
 
