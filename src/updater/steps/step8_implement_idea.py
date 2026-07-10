@@ -43,17 +43,20 @@ from src.updater.models import (
 
 logger = logging.getLogger(__name__)
 
-_MODELS_SOURCE = "\n\n".join(
-    inspect.getsource(cls)
-    for cls in (
-        _agent_models.Tick,
-        _agent_models.WarmCandle,
-        _agent_models.ColdMonth,
-        _agent_models.PairData,
-        _agent_models.BuySignal,
-        _agent_models.SellSignal,
+_MODELS_SOURCE = (
+    "\n\n".join(
+        inspect.getsource(cls)
+        for cls in (
+            _agent_models.Tick,
+            _agent_models.WarmCandle,
+            _agent_models.ColdMonth,
+            _agent_models.PairData,
+            _agent_models.BuySignal,
+            _agent_models.SellSignal,
+        )
     )
-) + "\n\nMarketData = dict[str, PairData]"
+    + "\n\nMarketData = dict[str, PairData]"
+)
 
 _RULES_DIR = Path("src/strategy/rules")
 _STRATEGY_FILE = Path("src/strategy/strategy.py")
@@ -61,6 +64,7 @@ _STRATEGY_FILE = Path("src/strategy/strategy.py")
 _IMPLEMENT_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
     "Generate a complete, self-contained Python module that implements the described rule. "
+    "The output must be real, executable Python code — NOT pseudocode. "
     "Return ONLY the raw Python source code — no explanation, no markdown, no code fences."
 )
 
@@ -200,7 +204,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
 
 def _pick_best(ideas: list[RuleIdea]) -> RuleIdea | None:
-    candidates: list[RuleIdea] = [i for i in ideas if i.status == "evaluated" and i.score is not None]
+    candidates: list[RuleIdea] = [
+        i for i in ideas if i.status == "evaluated" and i.score is not None
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda i: i.score or 0.0)
@@ -361,7 +367,9 @@ def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
         logger.debug("Applying %d change(s) from diff", len(result.changes))
         return _apply_changes(code, result.changes)
     except Exception:
-        logger.warning("Diff generation/application failed; code unchanged", exc_info=True)
+        logger.warning(
+            "Diff generation/application failed; code unchanged", exc_info=True
+        )
         return code
 
 
@@ -378,10 +386,15 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
             logger.info("Code passed validation after %d fix attempt(s)", attempt)
             break
         logger.warning(
-            "Validation error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
+            "Validation error (attempt %d/%d): %s",
+            attempt + 1,
+            _MAX_FIX_ATTEMPTS,
+            error,
         )
         code = _fix_with_diff(code, idea, llm)
-        logger.debug("Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code)
+        logger.debug(
+            "Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code
+        )
     else:
         error = _check_syntax(code)
         if error is not None:
@@ -469,7 +482,8 @@ def _unregister_dropped(state_dir: Path, config: AppConfig) -> None:
         _remove_from_rule_evaluation(state_dir, rule_id)
         _remove_signals(rule_id, config)
         logger.info(
-            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger", rule_id
+            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger",
+            rule_id,
         )
 
 
