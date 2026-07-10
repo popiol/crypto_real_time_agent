@@ -4,39 +4,120 @@ import math
 import statistics
 from datetime import datetime, timedelta
 
-from src.agent.models import BuySignal, MarketData, PairData, SellSignal, WarmCandle
+import numpy as np
+from pydantic import BaseModel, Field
+
+# Assuming these models are available in a src.agent.models path or similar.
+# For a self-contained module, I'll define them here as per the prompt's "Available data models".
+
+class Tick(BaseModel):
+    """A single poll snapshot for one currency pair."""
+
+    pair: str
+    polled_at: datetime
+
+    # Last trade
+    last_price: float
+
+    # Best bid / ask from Ticker
+    bid_price: float
+    bid_volume: float
+    ask_price: float
+    ask_volume: float
+
+    # 24-hour rolling volume in base currency (from Kraken Ticker v[1])
+    volume_24h: float = 0.0
+
+    # Derived
+    mid_price: float
+    spread_abs: float  # ask - bid
+    spread_rel: float  # (ask - bid) / mid  * 100  (%)
+
+    # Top-5 order book (from Depth endpoint)
+    # OrderBook definition is missing in prompt, but not used in this rule, so can be omitted.
+    # For completeness, if it were used, it would need to be defined.
+    # For now, setting it to Any or just leaving it as None.
+    order_book: dict | None = None
 
 
-# Minimum warm candles needed for a stable ARIMA fit.
-# While ARIMA(1,1,0) can technically run with 3 prices, 10 is more robust.
-MIN_ARIMA_PRICES = 10 
+class WarmCandle(BaseModel):
+    hour: datetime
+    open_price: float
+    high: float
+    low: float
+    close: float
+    avg_spread_rel: float = 0.0
+
+
+class ColdMonth(BaseModel):
+    month: str  # "YYYY-MM"
+    min_price: float
+    max_price: float
+    avg_price: float
+    avg_daily_spread: float
+    candle_count: int
+    last_candle_hour: datetime
+
+
+class PairData(BaseModel):
+    hot: list[Tick] = Field(
+        default=[],
+        description="TTL-capped; ~300 ticks at 1 poll/sec with default 300s retention",
+    )
+    warm: list[WarmCandle] = Field(
+        default=[], description="At most 24 entries (last 24 hourly candles)"
+    )
+    cold: list[ColdMonth] = Field(
+        default=[], description="One entry per calendar month; unbounded"
+    )
+
+
+class BuySignal(BaseModel):
+    pair: str
+    timestamp: datetime
+    price: float
+    rule_id: str = ""
+    confidence: float | None = None
+
+
+class SellSignal(BaseModel):
+    pair: str
+    timestamp: datetime
+    price: float
+    rule_id: str = ""
+    confidence: float | None = None
+
+
+MarketData = dict[str, PairData]
+
+
+# Minimum warm candles needed for a reliable fit for current timeframe ARIMA
+MIN_CANDLES = 10
 
 # Forecast horizon in hours
 FORECAST_HORIZON = 3
 
-# ATR parameters
-ATR_PERIOD = 14
-ATR_MULTIPLIER = 1.5
+# Lookback window for calculating recent volatility (in hours/candles)
+LOOKBACK_VOLATILITY_WINDOW = 24
+
+# Multiplier for the historical standard deviation to determine the deviation threshold
+VOLATILITY_MULTIPLIER = 1.5
 
 # Multi-Timeframe RSI Confirmation Parameters
 HIGHER_TIMEFRAME_FACTOR = 4  # e.g., 4x current timeframe (4-hour candles if current is 1-hour)
+
 # RSI period for the higher timeframe.
 # Note: The `warm` data (max 24 hourly candles) limits the number of aggregated
 # 4-hour candles to 6 (24 / 4). A standard RSI(14) would require at least 15 candles.
 # We adjust this value to `5` to allow calculation with the available data.
+# If more historical `warm` data were available, this could be 14 or higher.
 RSI_PERIOD_HIGHER_TF = 5
-RSI_OVERSOLD_THRESHOLD = 30
-RSI_OVERBOUGHT_THRESHOLD = 70
 
-# Overall minimum warm candles required for all calculations to proceed:
-# 1. ARIMA: MIN_ARIMA_PRICES (e.g., 10)
-# 2. ATR: ATR_PERIOD + 1 (e.g., 14 + 1 = 15)
-# 3. Higher TF RSI: (RSI_PERIOD_HIGHER_TF + 1) * HIGHER_TIMEFRAME_FACTOR (e.g., (5 + 1) * 4 = 24)
-MIN_WARM_CANDLES_FOR_SIGNAL = max(
-    MIN_ARIMA_PRICES, 
-    ATR_PERIOD + 1, 
-    (RSI_PERIOD_HIGHER_TF + 1) * HIGHER_TIMEFRAME_FACTOR
-)
+# --- MODIFICATION START ---
+# Relaxed RSI thresholds as per the rule idea
+RSI_OVERSOLD_THRESHOLD = 40
+RSI_OVERBOUGHT_THRESHOLD = 60
+# --- MODIFICATION END ---
 
 
 def _fit_arima110(prices: list[float]) -> tuple[float, float, float]:
@@ -50,7 +131,7 @@ def _fit_arima110(prices: list[float]) -> tuple[float, float, float]:
     y = diffs[1:]
     n = len(x)
 
-    if n < 2: # Need at least 2 differences for x and y to fit, meaning 3 prices
+    if n < 2:
         return 0.0, 0.0, 0.0
 
     x_mean = statistics.mean(x)
@@ -67,7 +148,6 @@ def _fit_arima110(prices: list[float]) -> tuple[float, float, float]:
         intercept = y_mean - phi * x_mean
 
     residuals = [yi - (phi * xi + intercept) for xi, yi in zip(x, y)]
-    # sigma calculation needs at least 2 residuals for stdev. If n=2, len(residuals)=2.
     sigma = statistics.stdev(residuals) if n >= 3 else abs(residuals[0]) if residuals else 0.0
 
     return phi, intercept, sigma
@@ -75,7 +155,7 @@ def _fit_arima110(prices: list[float]) -> tuple[float, float, float]:
 
 def _forecast(prices: list[float], phi: float, intercept: float, horizon: int) -> float:
     """Iterate the ARIMA(1,1,0) recursion h steps ahead."""
-    if len(prices) < 2: # Need at least 2 prices to calculate a diff
+    if len(prices) < 2:
         return prices[-1] if prices else 0.0
 
     last_diff = prices[-1] - prices[-2]
@@ -158,96 +238,69 @@ def _calculate_rsi(prices: list[float], period: int) -> float | None:
     return rsi
 
 
-def _calculate_atr(
-    highs: list[float], lows: list[float], closes: list[float], period: int
-) -> float | None:
-    """Calculates the Average True Range (ATR)."""
-    if not (len(highs) == len(lows) == len(closes)) or len(highs) < period + 1:
-        # Need at least 'period + 1' candles to calculate the first 'period' True Ranges
-        return None
-
-    true_ranges: list[float] = []
-    # TR calculation starts from the second candle (index 1) as it needs prev_close
-    for i in range(1, len(highs)):
-        prev_close = closes[i - 1]
-        current_high = highs[i]
-        current_low = lows[i]
-
-        tr1 = current_high - current_low
-        tr2 = abs(current_high - prev_close)
-        tr3 = abs(current_low - prev_close)
-
-        true_ranges.append(max(tr1, tr2, tr3))
-
-    # At this point, len(true_ranges) should be len(highs) - 1.
-    if len(true_ranges) < period: # This should be covered by the initial check, but defensive
-        return None 
-
-    # Calculate initial ATR as the simple average of the first 'period' True Ranges
-    initial_atr = sum(true_ranges[:period]) / period
-
-    # Apply Wilder's smoothing for subsequent periods to get the latest ATR
-    atr_value = initial_atr
-    for i in range(period, len(true_ranges)):
-        atr_value = ((atr_value * (period - 1)) + true_ranges[i]) / period
-
-    return atr_value
-
-
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
-        # 1. Extract data
         # Current timeframe data (hourly candles)
-        current_tf_closes = [c.close for c in pair_data.warm]
-        current_tf_highs = [c.high for c in pair_data.warm]
-        current_tf_lows = [c.low for c in pair_data.warm]
+        current_tf_prices = [c.close for c in pair_data.warm]
         
         # Higher timeframe data (e.g., 4-hour candles from hourly data)
-        higher_tf_closes = _aggregate_closes_by_factor(pair_data.warm, HIGHER_TIMEFRAME_FACTOR)
+        higher_tf_prices = _aggregate_closes_by_factor(pair_data.warm, HIGHER_TIMEFRAME_FACTOR)
 
-        # 2. Check for sufficient data
-        if len(pair_data.warm) < MIN_WARM_CANDLES_FOR_SIGNAL:
+        # 2. If insufficient data, return "NO_SIGNAL"
+        # Check for sufficient data for ARIMA forecast and volatility calculation
+        if (
+            len(current_tf_prices) < MIN_CANDLES
+            or len(current_tf_prices) < LOOKBACK_VOLATILITY_WINDOW
+            or not pair_data.hot # Need hot data for current price and timestamp
+        ):
             continue
-        if not pair_data.hot: # Need hot data for current price and timestamp
+
+        # Check for sufficient data for higher timeframe RSI calculation
+        # Need at least period + 1 data points for RSI
+        if len(higher_tf_prices) < RSI_PERIOD_HIGHER_TF + 1:
             continue
 
-        # 3. Calculate ARIMA(1,1,0) forecast for the next period
-        phi, intercept, sigma = _fit_arima110(current_tf_closes)
+        # 3. Calculate ARIMA(arima_order) forecast for the next period
+        phi, intercept, sigma = _fit_arima110(current_tf_prices)
 
-        # Skip if ARIMA model is degenerate or unstable (e.g., all prices are identical)
+        # Skip if ARIMA model is degenerate
         if sigma == 0 or not math.isfinite(phi) or not math.isfinite(intercept):
             continue
 
-        forecast_price = _forecast(current_tf_closes, phi, intercept, FORECAST_HORIZON)
+        forecast_price = _forecast(current_tf_prices, phi, intercept, FORECAST_HORIZON)
         
-        # 4. Determine current_price and timestamp
+        # 4. Determine current_price
         current_price = pair_data.hot[-1].last_price
         ts = pair_data.hot[-1].polled_at
 
-        # 5. Calculate ATR-adjusted deviation_threshold
-        atr = _calculate_atr(current_tf_highs, current_tf_lows, current_tf_closes, ATR_PERIOD)
+        # 5. Calculate adaptive_threshold
+        recent_prices_for_volatility = current_tf_prices[-LOOKBACK_VOLATILITY_WINDOW:]
+        price_std = np.std(recent_prices_for_volatility)
+        
+        deviation_threshold = VOLATILITY_MULTIPLIER * price_std
         
         # Avoid signals based on zero or near-zero volatility
-        if atr is None or atr <= 0:
+        if deviation_threshold <= 0:
             continue
-        
-        deviation_threshold = ATR_MULTIPLIER * atr
-        
+
         # 6. Calculate higher_timeframe_rsi
-        higher_timeframe_rsi = _calculate_rsi(higher_tf_closes, RSI_PERIOD_HIGHER_TF)
+        higher_timeframe_rsi = _calculate_rsi(higher_tf_prices, RSI_PERIOD_HIGHER_TF)
         if higher_timeframe_rsi is None:
-            # This case should be covered by MIN_WARM_CANDLES_FOR_SIGNAL,
-            # but it's a defensive check if data somehow gets corrupted.
+            # This case should ideally be covered by the earlier length check for higher_tf_prices,
+            # but it's a safe guard.
             continue 
 
         # 7-10. Define signal conditions based on ARIMA forecast and RSI confirmation
         buy_signal_condition_arima = forecast_price > (current_price + deviation_threshold)
         sell_signal_condition_arima = forecast_price < (current_price - deviation_threshold)
 
-        buy_signal_condition_rsi = higher_timeframe_rsi < RSI_OVERSOLD_THRESHOLD
-        sell_signal_condition_rsi = higher_timeframe_rsi > RSI_OVERBOUGHT_THRESHOLD
+        # --- MODIFICATION START ---
+        # Updated RSI confirmation thresholds
+        buy_signal_condition_rsi = higher_timeframe_rsi < RSI_OVERSOLD_THRESHOLD  # Now < 40
+        sell_signal_condition_rsi = higher_timeframe_rsi > RSI_OVERBOUGHT_THRESHOLD # Now > 60
+        # --- MODIFICATION END ---
 
         # 11-12. Combine conditions for final signal
         if buy_signal_condition_arima and buy_signal_condition_rsi:
