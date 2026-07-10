@@ -83,6 +83,13 @@ def test_empty_output_raises(mock_run):
         cli_call(system="", user="hi")
 
 
+@patch("src.updater.claude_cli.subprocess.run")
+def test_none_stdout_raises(mock_run):
+    mock_run.return_value = _proc(None)
+    with pytest.raises(RuntimeError, match="empty output"):
+        cli_call(system="", user="hi")
+
+
 # ── cli_call_structured ───────────────────────────────────────────────────────
 
 @patch("src.updater.claude_cli.subprocess.run")
