@@ -55,13 +55,15 @@ class RuleEvaluation(BaseModel):
     summary: str
 
 
-class Conclusion(BaseModel):
-    text: str
-    rule_ids: list[str]
+class VersionDirectionConclusion(BaseModel):
+    rule_name: str
+    dropped_versions: list[str]
+    failed_direction: str
+    proposed_direction: str
 
 
 class Conclusions(BaseModel):
-    conclusions: list[Conclusion]
+    conclusions: list[VersionDirectionConclusion]
 
 
 class LongTermPlan(BaseModel):

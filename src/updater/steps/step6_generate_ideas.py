@@ -93,7 +93,9 @@ def _generate_one(
             f"Use this idea_id: {new_id}\n"
             "Set status to 'proposed' and score to null.\n"
             "For a new_rule idea: set kind='new_rule', target_rule=null.\n"
-            "For a modify_rule idea: set kind='modify_rule', target_rule=<rule_id of the rule to revise>."
+            "For a modify_rule idea: set kind='modify_rule', target_rule=<rule_id of the rule to revise>. "
+            "A modify_rule idea must be a SMALL, targeted change to the existing rule — "
+            "typically adjusting a threshold, window length, or coefficient. "
         ),
         output_type=RuleIdea,
     )
