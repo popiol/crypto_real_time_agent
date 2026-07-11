@@ -15,14 +15,13 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
-import src.strategy.rules.rule_02_bollinger_band.v5 as rule_02_bollinger_band_v5
+import src.strategy.rules.rule_27_bollinger_band_reversal_with_c.v1 as rule_27_bollinger_band_reversal_with_c_v1
 import src.strategy.rules.rule_26_bollinger_band_breach_with_mfi.v1 as rule_26_bollinger_band_breach_with_mfi_v1
 import src.strategy.rules.rule_02_bollinger_band.v4 as rule_02_bollinger_band_v4
 import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
 import src.strategy.rules.rule_25_bollinger_band_extremes_with_c.v1 as rule_25_bollinger_band_extremes_with_c_v1
 import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
-import src.strategy.rules.rule_12_lead_lag.v2 as rule_12_lead_lag_v2
 import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v2 as rule_19_bollinger_band_with_volume_spi_v2
 import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v1 as rule_24_bollinger_band_breach_with_mfi_v1
 from src.agent.models import BuySignal, MarketData, SellSignal
@@ -32,7 +31,6 @@ Signal = BuySignal | SellSignal
 ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v1,
     rule_04_arima_forecast_v1,
-    rule_12_lead_lag_v2,
     rule_19_bollinger_band_with_volume_spi_v2,
     rule_24_bollinger_band_breach_with_mfi_v1,
     rule_25_bollinger_band_extremes_with_c_v1,
@@ -40,7 +38,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v3,
     rule_02_bollinger_band_v4,
     rule_26_bollinger_band_breach_with_mfi_v1,
-    rule_02_bollinger_band_v5,
+    rule_27_bollinger_band_reversal_with_c_v1,
 ]
 
 
