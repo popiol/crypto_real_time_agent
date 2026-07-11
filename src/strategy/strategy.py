@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_07_order_book_imbalance.v2 as rule_07_order_book_imbalance_v2
 import src.strategy.rules.rule_08_roc_momentum.v2 as rule_08_roc_momentum_v2
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
@@ -45,6 +46,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_11_dqn_agent_v1,
     rule_12_lead_lag_v1,
     rule_08_roc_momentum_v2,
+    rule_07_order_book_imbalance_v2,
 ]
 
 
