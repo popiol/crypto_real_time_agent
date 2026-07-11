@@ -51,6 +51,7 @@ class Transaction(BaseModel):
     quantity: float
     buy_price: float
     sell_price: float
+    cost: float
     revenue: float
     gain_pct: float
     opened_at: datetime
@@ -151,7 +152,8 @@ def _fill_orders(
                 revenue, order.quantity * order.limit_price - revenue, portfolio.cash,
             )
             if pos is not None:
-                gain_pct = (order.limit_price - pos.buy_price) / pos.buy_price
+                cost = pos.quantity * pos.buy_price * (1 + fee)
+                gain_pct = (revenue - cost) / cost
                 transactions.append(Transaction(
                     transaction_id=str(uuid.uuid4()),
                     pair=order.pair,
@@ -159,6 +161,7 @@ def _fill_orders(
                     quantity=order.quantity,
                     buy_price=pos.buy_price,
                     sell_price=order.limit_price,
+                    cost=cost,
                     revenue=revenue,
                     gain_pct=gain_pct,
                     opened_at=pos.opened_at,
@@ -244,6 +247,7 @@ def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None
     pos = next((p for p in portfolio.positions if p.pair == signal.pair), None)
     if pos is None:
         return
+    limit_price = max(signal.price, pos.buy_price * 1.005)
     portfolio.pending_orders = [
         o for o in portfolio.pending_orders
         if not (o.direction == "sell" and o.position_id == pos.position_id)
@@ -253,9 +257,9 @@ def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None
         direction="sell",
         pair=signal.pair,
         rule_id=signal.rule_id,
-        limit_price=signal.price,
+        limit_price=limit_price,
         quantity=pos.quantity,
-        value=pos.quantity * signal.price,
+        value=pos.quantity * limit_price,
         position_id=pos.position_id,
         created_at=now,
     ))
