@@ -227,10 +227,11 @@ def _score(
     # - candidate  : not enough signals yet
     # - short eval : deprecate only on severe loss (< rule_early_deprecation_gain)
     # - mature eval : deprecate on zero or below-zero avg gain
+    avg_transaction_gain = transaction_gains.get(rule_id, 0.0)
     mature = evaluation_days >= config.rule_mature_days
     if signal_count < config.rule_min_signals:
         status = "candidate"
-    elif mature and avg_gain_pct <= config.rule_mature_deprecation_gain:
+    elif mature and avg_transaction_gain <= config.rule_mature_deprecation_gain:
         status = "deprecate"
     elif not mature and avg_gain_pct < config.rule_early_deprecation_gain:
         status = "deprecate"
@@ -244,7 +245,7 @@ def _score(
         evaluation_days=evaluation_days,
         avg_gain_pct=avg_gain_pct,
         recent_avg_gain_pct=recent_avg_gain_pct,
-        avg_transaction_gain=transaction_gains.get(rule_id, 0.0),
+        avg_transaction_gain=avg_transaction_gain,
         positive_rate=positive_rate,
         avg_gain_24h=avg_gain_24h,
         max_gain_24h=max_gain_24h,
