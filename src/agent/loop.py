@@ -15,10 +15,11 @@ import sys
 import time
 import uuid
 
+import src.strategy.strategy as _strategy
 from src.agent import collector, storage
+from src.agent import portfolio as _portfolio
 from src.agent.db import open_db
 from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
-import src.strategy.strategy as _strategy
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,11 @@ def _append_signals(signals: list[BuySignal | SellSignal], config: AppConfig) ->
                 (
                     str(uuid.uuid4()),
                     "sell" if isinstance(s, SellSignal) else "buy",
-                    s.pair, s.rule_id, s.timestamp.isoformat(), s.price, s.confidence,
+                    s.pair,
+                    s.rule_id,
+                    s.timestamp.isoformat(),
+                    s.price,
+                    s.confidence,
                 )
                 for s in signals
             ],
@@ -56,8 +61,10 @@ def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellS
         signals = list(_strategy.find_signals(market_data))
         volume_usd = {t.pair: t.volume_24h * t.last_price for t in ticks}
         return [
-            s for s in signals
-            if isinstance(s, SellSignal) or volume_usd.get(s.pair, 0.0) >= _MIN_VOLUME_24H_USD
+            s
+            for s in signals
+            if isinstance(s, SellSignal)
+            or volume_usd.get(s.pair, 0.0) >= _MIN_VOLUME_24H_USD
         ]
     except Exception:
         logger.exception("Strategy execution failed")
@@ -68,7 +75,9 @@ def persist_signals(signals: list[BuySignal | SellSignal], config: AppConfig) ->
     if not signals:
         return
     buys = sum(1 for s in signals if isinstance(s, BuySignal))
-    logger.info("%d signal(s): %d buy, %d sell", len(signals), buys, len(signals) - buys)
+    logger.info(
+        "%d signal(s): %d buy, %d sell", len(signals), buys, len(signals) - buys
+    )
     try:
         _append_signals(signals, config)
     except Exception:
@@ -77,7 +86,9 @@ def persist_signals(signals: list[BuySignal | SellSignal], config: AppConfig) ->
 
 def run(config: AppConfig) -> None:
     """Start the live polling loop. Runs until interrupted."""
-    logger.info("Starting pull loop. Pairs: %s", config.pairs or "auto-discover all USD pairs")
+    logger.info(
+        "Starting pull loop. Pairs: %s", config.pairs or "auto-discover all USD pairs"
+    )
 
     while True:
         cycle_start = time.monotonic()
