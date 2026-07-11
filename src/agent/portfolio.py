@@ -264,6 +264,10 @@ def _place_buy(
 ) -> None:
     if len(portfolio.positions) >= 10:
         return
+    already_held = any(p.pair == signal.pair for p in portfolio.positions)
+    already_pending = any(o.pair == signal.pair and o.direction == "buy" for o in portfolio.pending_orders)
+    if already_held or already_pending:
+        return
     spend = portfolio.capital(current_prices) / 10
     committed = sum(o.value for o in portfolio.pending_orders if o.direction == "buy")
     if spend <= 0 or portfolio.cash - committed < spend:

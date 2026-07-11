@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_02_bollinger_band.v7 as rule_02_bollinger_band_v7
 import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v2 as rule_19_bollinger_band_with_volume_spi_v2
 import src.strategy.rules.rule_18_average_directional_index_adx_.v2 as rule_18_average_directional_index_adx__v2
 import src.strategy.rules.rule_02_bollinger_band.v6 as rule_02_bollinger_band_v6
@@ -53,6 +54,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v6,
     rule_18_average_directional_index_adx__v2,
     rule_19_bollinger_band_with_volume_spi_v2,
+    rule_02_bollinger_band_v7,
 ]
 
 
