@@ -43,17 +43,20 @@ from src.updater.models import (
 
 logger = logging.getLogger(__name__)
 
-_MODELS_SOURCE = "\n\n".join(
-    inspect.getsource(cls)
-    for cls in (
-        _agent_models.Tick,
-        _agent_models.WarmCandle,
-        _agent_models.ColdMonth,
-        _agent_models.PairData,
-        _agent_models.BuySignal,
-        _agent_models.SellSignal,
+_MODELS_SOURCE = (
+    "\n\n".join(
+        inspect.getsource(cls)
+        for cls in (
+            _agent_models.Tick,
+            _agent_models.WarmCandle,
+            _agent_models.ColdMonth,
+            _agent_models.PairData,
+            _agent_models.BuySignal,
+            _agent_models.SellSignal,
+        )
     )
-) + "\n\nMarketData = dict[str, PairData]"
+    + "\n\nMarketData = dict[str, PairData]"
+)
 
 _RULES_DIR = Path("src/strategy/rules")
 _STRATEGY_FILE = Path("src/strategy/strategy.py")
@@ -200,7 +203,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
 
 def _pick_best(ideas: list[RuleIdea]) -> RuleIdea | None:
-    candidates: list[RuleIdea] = [i for i in ideas if i.status == "evaluated" and i.score is not None]
+    candidates: list[RuleIdea] = [
+        i for i in ideas if i.status == "evaluated" and i.score is not None
+    ]
     if not candidates:
         return None
     return max(candidates, key=lambda i: i.score or 0.0)
@@ -361,7 +366,9 @@ def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
         logger.debug("Applying %d change(s) from diff", len(result.changes))
         return _apply_changes(code, result.changes)
     except Exception:
-        logger.warning("Diff generation/application failed; code unchanged", exc_info=True)
+        logger.warning(
+            "Diff generation/application failed; code unchanged", exc_info=True
+        )
         return code
 
 
@@ -378,10 +385,15 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
             logger.info("Code passed validation after %d fix attempt(s)", attempt)
             break
         logger.warning(
-            "Validation error (attempt %d/%d): %s", attempt + 1, _MAX_FIX_ATTEMPTS, error
+            "Validation error (attempt %d/%d): %s",
+            attempt + 1,
+            _MAX_FIX_ATTEMPTS,
+            error,
         )
         code = _fix_with_diff(code, idea, llm)
-        logger.debug("Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code)
+        logger.debug(
+            "Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code
+        )
     else:
         error = _check_syntax(code)
         if error is not None:
@@ -403,26 +415,28 @@ def _register_rule(strategy_path: Path, rule_id: str) -> None:
     import_path = _rule_id_to_import_path(rule_id)
     import_line = f"import src.strategy.rules.{import_path} as {rule_id}"
 
-    last_import = re.search(
-        r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
-    )
-    if last_import:
-        content = (
-            content[: last_import.end()]
-            + "\n"
-            + import_line
-            + content[last_import.end() :]
+    if import_line not in content:
+        last_import = re.search(
+            r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
         )
-    else:
-        content = import_line + "\n" + content
+        if last_import:
+            content = (
+                content[: last_import.end()]
+                + "\n"
+                + import_line
+                + content[last_import.end() :]
+            )
+        else:
+            content = import_line + "\n" + content
 
-    content = re.sub(
-        r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
-        rf"\1\2\n    {rule_id},\3",
-        content,
-        count=1,
-        flags=re.DOTALL,
-    )
+    if f"    {rule_id}," not in content:
+        content = re.sub(
+            r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
+            rf"\1\2\n    {rule_id},\3",
+            content,
+            count=1,
+            flags=re.DOTALL,
+        )
 
     strategy_path.write_text(content, encoding="utf-8")
     logger.info("Registered %s in strategy.py", rule_id)
@@ -469,7 +483,8 @@ def _unregister_dropped(state_dir: Path, config: AppConfig) -> None:
         _remove_from_rule_evaluation(state_dir, rule_id)
         _remove_signals(rule_id, config)
         logger.info(
-            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger", rule_id
+            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger",
+            rule_id,
         )
 
 

@@ -53,9 +53,14 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             low             REAL NOT NULL,
             close           REAL NOT NULL,
             avg_spread_rel  REAL NOT NULL DEFAULT 0.0,
+            volume          REAL NOT NULL DEFAULT 0.0,
             PRIMARY KEY (pair, hour)
         )
     """)
+    con.execute(
+        "ALTER TABLE warm_candles ADD COLUMN volume REAL NOT NULL DEFAULT 0.0"
+        if not _column_exists(con, "warm_candles", "volume") else "SELECT 1"
+    )
     con.execute("""
         CREATE TABLE IF NOT EXISTS cold_months (
             pair              TEXT NOT NULL,
@@ -89,3 +94,8 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
     con.execute("CREATE INDEX IF NOT EXISTS idx_signals_pair ON signals(pair, direction)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_signals_rule ON signals(rule_id)")
     con.commit()
+
+
+def _column_exists(con: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = con.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)

@@ -6,6 +6,9 @@ PyYAML>=6.0
 requests>=2.0
 tensorflow>=2.0
 scikit-learn>=1.9
+pandas>=3.0
+statsmodels>=0.14
+arch>=8.0
 
 # LLM — install the package matching your configured llm_model prefix
 langchain-core>=0.3

@@ -42,6 +42,7 @@ class RuleScore(BaseModel):
     signal_count: int
     evaluation_days: int
     avg_gain_pct: float
+    recent_avg_gain_pct: float
     positive_rate: float
     avg_gain_24h: float
     max_gain_24h: float

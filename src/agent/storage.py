@@ -46,6 +46,7 @@ def _candle_from_row(row) -> WarmCandle:
         low=row["low"],
         close=row["close"],
         avg_spread_rel=row["avg_spread_rel"],
+        volume=row["volume"] if "volume" in row.keys() else 0.0,
     )
 
 
@@ -127,14 +128,15 @@ def _prune_pair(pair: str, cutoff_str: str, con) -> None:
 
 def _upsert_warm_candles(candles: list[WarmCandle], pair: str, con) -> None:
     con.executemany(
-        """INSERT INTO warm_candles (pair, hour, open_price, high, low, close, avg_spread_rel)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+        """INSERT INTO warm_candles (pair, hour, open_price, high, low, close, avg_spread_rel, volume)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(pair, hour) DO UPDATE SET
              open_price=excluded.open_price, high=excluded.high,
              low=excluded.low, close=excluded.close,
-             avg_spread_rel=excluded.avg_spread_rel""",
+             avg_spread_rel=excluded.avg_spread_rel,
+             volume=excluded.volume""",
         [
-            (pair, c.hour.isoformat(), c.open_price, c.high, c.low, c.close, c.avg_spread_rel)
+            (pair, c.hour.isoformat(), c.open_price, c.high, c.low, c.close, c.avg_spread_rel, c.volume)
             for c in candles
         ],
     )
@@ -180,6 +182,7 @@ def _merge_into_candles(
         ticks.sort(key=lambda t: t.polled_at)
         prices = [t.last_price for t in ticks]
         avg_spread = sum(t.spread_rel for t in ticks) / len(ticks)
+        avg_volume = sum(t.volume_24h for t in ticks) / len(ticks)
         if hour in candle_map:
             c = candle_map[hour]
             candle_map[hour] = WarmCandle(
@@ -189,6 +192,7 @@ def _merge_into_candles(
                 low=min(c.low, min(prices)),
                 close=prices[-1],
                 avg_spread_rel=avg_spread,
+                volume=avg_volume,
             )
         else:
             candle_map[hour] = WarmCandle(
@@ -198,6 +202,7 @@ def _merge_into_candles(
                 low=min(prices),
                 close=prices[-1],
                 avg_spread_rel=avg_spread,
+                volume=avg_volume,
             )
 
     return sorted(candle_map.values(), key=lambda c: c.hour)[-24:]

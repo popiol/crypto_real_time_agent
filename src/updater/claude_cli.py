@@ -1,20 +1,25 @@
-"""Claude Code CLI — non-interactive LLM calls.
+"""Claude Code CLI — complete integration module.
 
-Wraps the local `claude` binary. Requires the binary to be on PATH and
-authenticated via OAuth (does NOT need ANTHROPIC_API_KEY — do not use --bare).
+Provides plain-text and structured LLM calls via the local `claude` binary,
+plus a LangChain-compatible adapter for use with make_llm().
+
+Requires the `claude` binary on PATH, authenticated via OAuth.
+Does NOT require ANTHROPIC_API_KEY — do not add --bare, which blocks OAuth.
 """
-
-from __future__ import annotations
 
 import json
 import subprocess
-from typing import TypeVar
+from typing import Generic, TypeVar
 
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
 
 _TIMEOUT = 120
+
+
+# ── Core subprocess layer ─────────────────────────────────────────────────────
 
 
 def cli_call(system: str, user: str) -> str:
@@ -56,7 +61,45 @@ def _run(system: str, user: str, json_schema: str | None = None) -> str:
     if json_schema:
         envelope = json.loads(stdout)
         payload = envelope.get("result", stdout)
-        # result field may be a JSON string or an already-decoded dict
         return payload if isinstance(payload, str) else json.dumps(payload)
 
     return stdout
+
+
+# ── LangChain-compatible adapter ──────────────────────────────────────────────
+
+
+class CliResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class ClaudeCliStructured(Generic[T]):
+    def __init__(self, output_type: type[T]) -> None:
+        self._type = output_type
+
+    def invoke(self, messages: list) -> T:
+        system, user = _extract_messages(messages)
+        return cli_call_structured(system=system, user=user, output_type=self._type)
+
+
+class ClaudeCli:
+    """LangChain-compatible adapter that delegates to the claude CLI binary."""
+
+    def invoke(self, messages: list) -> CliResponse:
+        system, user = _extract_messages(messages)
+        return CliResponse(content=cli_call(system=system, user=user))
+
+    def with_structured_output(self, output_type: type[T]) -> ClaudeCliStructured[T]:
+        return ClaudeCliStructured(output_type)
+
+
+def _extract_messages(messages: list) -> tuple[str, str]:
+    system = ""
+    user = ""
+    for m in messages:
+        if isinstance(m, SystemMessage):
+            system = m.content if isinstance(m.content, str) else ""
+        elif isinstance(m, HumanMessage):
+            user = m.content if isinstance(m.content, str) else ""
+    return system, user
