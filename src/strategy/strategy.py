@@ -14,39 +14,29 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
-import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
 import src.strategy.rules.rule_32_bollinger_band_rejection_with_.v1 as rule_32_bollinger_band_rejection_with__v1
+import src.strategy.rules.rule_33_bollinger_band_rejection_with_.v1 as rule_33_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_31_bollinger_band_rejection_with_.v1 as rule_31_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_30_bollinger_band_breach_with_mfi.v1 as rule_30_bollinger_band_breach_with_mfi_v1
 import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v1 as rule_24_bollinger_band_breach_with_mfi_v1
 import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v2 as rule_24_bollinger_band_breach_with_mfi_v2
-import src.strategy.rules.rule_29_bollinger_band_reversal_with_m.v1 as rule_29_bollinger_band_reversal_with_m_v1
 import src.strategy.rules.rule_28_bollinger_band_reversal_with_c.v1 as rule_28_bollinger_band_reversal_with_c_v1
 import src.strategy.rules.rule_26_bollinger_band_breach_with_mfi.v1 as rule_26_bollinger_band_breach_with_mfi_v1
-import src.strategy.rules.rule_02_bollinger_band.v4 as rule_02_bollinger_band_v4
-import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
-import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
-import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v2 as rule_19_bollinger_band_with_volume_spi_v2
 from src.agent.models import BuySignal, MarketData, SellSignal
 
 Signal = BuySignal | SellSignal
 
 ACTIVE_RULES: list[ModuleType] = [
-    rule_02_bollinger_band_v1,
-    rule_04_arima_forecast_v1,
-    rule_19_bollinger_band_with_volume_spi_v2,
     rule_02_bollinger_band_v2,
-    rule_02_bollinger_band_v3,
-    rule_02_bollinger_band_v4,
     rule_26_bollinger_band_breach_with_mfi_v1,
     rule_28_bollinger_band_reversal_with_c_v1,
-    rule_29_bollinger_band_reversal_with_m_v1,
     rule_24_bollinger_band_breach_with_mfi_v1,
     rule_24_bollinger_band_breach_with_mfi_v2,
     rule_30_bollinger_band_breach_with_mfi_v1,
     rule_31_bollinger_band_rejection_with__v1,
     rule_32_bollinger_band_rejection_with__v1,
+    rule_33_bollinger_band_rejection_with__v1,
 ]
 
 
