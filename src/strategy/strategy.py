@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_15_dual_moving_average_crossover_.v1 as rule_15_dual_moving_average_crossover__v1
 import src.strategy.rules.rule_14_macd_crossover_with_ema_trend_.v2 as rule_14_macd_crossover_with_ema_trend__v2
 import src.strategy.rules.rule_13_macd_crossover_trend_following.v4 as rule_13_macd_crossover_trend_following_v4
 import src.strategy.rules.rule_14_macd_crossover_with_ema_trend_.v1 as rule_14_macd_crossover_with_ema_trend__v1
@@ -43,6 +44,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_14_macd_crossover_with_ema_trend__v1,
     rule_13_macd_crossover_trend_following_v4,
     rule_14_macd_crossover_with_ema_trend__v2,
+    rule_15_dual_moving_average_crossover__v1,
 ]
 
 
