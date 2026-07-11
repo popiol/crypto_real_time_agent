@@ -84,14 +84,19 @@ def run_cycle(
     portfolio = _load(config)
     current_prices = {t.pair: t.last_price for t in ticks}
 
-    new_transactions = _fill_orders(portfolio, current_prices, now, config.portfolio_fee)
+    new_transactions = _fill_orders(
+        portfolio, current_prices, now, config.portfolio_fee
+    )
     _close_stale_positions(portfolio, current_prices, now)
 
     best_rule = _find_best_rule(config.state_dir, config.portfolio_min_recent_gain)
     if best_rule:
         _place_orders(portfolio, signals, best_rule, now, current_prices)
     else:
-        logger.debug("No rule meets recent gain threshold (%.4f); no new orders", config.portfolio_min_recent_gain)
+        logger.debug(
+            "No rule meets recent gain threshold (%.4f); no new orders",
+            config.portfolio_min_recent_gain,
+        )
 
     for pos in portfolio.positions:
         pos.value = pos.quantity * current_prices.get(pos.pair, 0.0)
@@ -121,58 +126,81 @@ def _fill_orders(
             if portfolio.cash < cost:
                 logger.warning(
                     "Skipping BUY fill for %s: insufficient cash (%.2f < %.2f)",
-                    order.pair, portfolio.cash, cost,
+                    order.pair,
+                    portfolio.cash,
+                    cost,
                 )
                 continue
             portfolio.cash -= cost
-            portfolio.positions.append(Position(
-                position_id=str(uuid.uuid4()),
-                pair=order.pair,
-                rule_id=order.rule_id,
-                quantity=order.quantity,
-                buy_price=order.limit_price,
-                opened_at=now,
-            ))
+            portfolio.positions.append(
+                Position(
+                    position_id=str(uuid.uuid4()),
+                    pair=order.pair,
+                    rule_id=order.rule_id,
+                    quantity=order.quantity,
+                    buy_price=order.limit_price,
+                    opened_at=now,
+                )
+            )
             filled_ids.add(order.order_id)
             logger.info(
                 "Filled BUY  %s  qty=%.6f @ %.4f  cost=%.2f (fee=%.2f)  cash_remaining=%.2f",
-                order.pair, order.quantity, order.limit_price,
-                cost, cost - order.quantity * order.limit_price, portfolio.cash,
+                order.pair,
+                order.quantity,
+                order.limit_price,
+                cost,
+                cost - order.quantity * order.limit_price,
+                portfolio.cash,
             )
 
         elif order.direction == "sell" and price > order.limit_price:
-            pos = next((p for p in portfolio.positions if p.position_id == order.position_id), None)
+            pos = next(
+                (p for p in portfolio.positions if p.position_id == order.position_id),
+                None,
+            )
             revenue = order.quantity * order.limit_price * (1 - fee)
             portfolio.cash += revenue
-            portfolio.positions = [p for p in portfolio.positions if p.position_id != order.position_id]
+            portfolio.positions = [
+                p for p in portfolio.positions if p.position_id != order.position_id
+            ]
             filled_ids.add(order.order_id)
             logger.info(
                 "Filled SELL %s  qty=%.6f @ %.4f  revenue=%.2f (fee=%.2f)  cash=%.2f",
-                order.pair, order.quantity, order.limit_price,
-                revenue, order.quantity * order.limit_price - revenue, portfolio.cash,
+                order.pair,
+                order.quantity,
+                order.limit_price,
+                revenue,
+                order.quantity * order.limit_price - revenue,
+                portfolio.cash,
             )
             if pos is not None:
                 cost = pos.quantity * pos.buy_price * (1 + fee)
                 gain_pct = (revenue - cost) / cost
-                transactions.append(Transaction(
-                    transaction_id=str(uuid.uuid4()),
-                    pair=order.pair,
-                    rule_id=order.rule_id,
-                    quantity=order.quantity,
-                    buy_price=pos.buy_price,
-                    sell_price=order.limit_price,
-                    cost=cost,
-                    revenue=revenue,
-                    gain_pct=gain_pct,
-                    opened_at=pos.opened_at,
-                    closed_at=now,
-                ))
+                transactions.append(
+                    Transaction(
+                        transaction_id=str(uuid.uuid4()),
+                        pair=order.pair,
+                        rule_id=order.rule_id,
+                        quantity=order.quantity,
+                        buy_price=pos.buy_price,
+                        sell_price=order.limit_price,
+                        cost=cost,
+                        revenue=revenue,
+                        gain_pct=gain_pct,
+                        opened_at=pos.opened_at,
+                        closed_at=now,
+                    )
+                )
 
-    portfolio.pending_orders = [o for o in portfolio.pending_orders if o.order_id not in filled_ids]
+    portfolio.pending_orders = [
+        o for o in portfolio.pending_orders if o.order_id not in filled_ids
+    ]
     return transactions
 
 
-def _close_stale_positions(portfolio: Portfolio, current_prices: dict[str, float], now: datetime) -> None:
+def _close_stale_positions(
+    portfolio: Portfolio, current_prices: dict[str, float], now: datetime
+) -> None:
     cutoff = now - timedelta(hours=24)
     for pos in portfolio.positions:
         if pos.opened_at > cutoff:
@@ -181,23 +209,29 @@ def _close_stale_positions(portfolio: Portfolio, current_prices: dict[str, float
         if price is None:
             continue
         portfolio.pending_orders = [
-            o for o in portfolio.pending_orders
+            o
+            for o in portfolio.pending_orders
             if not (o.direction == "sell" and o.position_id == pos.position_id)
         ]
-        portfolio.pending_orders.append(Order(
-            order_id=str(uuid.uuid4()),
-            direction="sell",
-            pair=pos.pair,
-            rule_id=pos.rule_id,
-            limit_price=price,
-            quantity=pos.quantity,
-            value=pos.quantity * price,
-            position_id=pos.position_id,
-            created_at=now,
-        ))
+        portfolio.pending_orders.append(
+            Order(
+                order_id=str(uuid.uuid4()),
+                direction="sell",
+                pair=pos.pair,
+                rule_id=pos.rule_id,
+                limit_price=price,
+                quantity=pos.quantity,
+                value=pos.quantity * price,
+                position_id=pos.position_id,
+                created_at=now,
+            )
+        )
         logger.info(
             "Auto-closing stale position %s %s (held >24h): qty=%.6f @ %.4f",
-            pos.position_id[:8], pos.pair, pos.quantity, price,
+            pos.position_id[:8],
+            pos.pair,
+            pos.quantity,
+            price,
         )
 
 
@@ -230,40 +264,53 @@ def _place_buy(
     if spend <= 0 or portfolio.cash - committed < spend:
         return
     qty = spend / signal.price
-    portfolio.pending_orders.append(Order(
-        order_id=str(uuid.uuid4()),
-        direction="buy",
-        pair=signal.pair,
-        rule_id=signal.rule_id,
-        limit_price=signal.price,
-        quantity=qty,
-        value=qty * signal.price,
-        created_at=now,
-    ))
-    logger.info("Placed BUY  %s  qty=%.6f @ %.4f  spend=%.2f", signal.pair, qty, signal.price, spend)
+    portfolio.pending_orders.append(
+        Order(
+            order_id=str(uuid.uuid4()),
+            direction="buy",
+            pair=signal.pair,
+            rule_id=signal.rule_id,
+            limit_price=signal.price,
+            quantity=qty,
+            value=qty * signal.price,
+            created_at=now,
+        )
+    )
+    logger.info(
+        "Placed BUY  %s  qty=%.6f @ %.4f  spend=%.2f",
+        signal.pair,
+        qty,
+        signal.price,
+        spend,
+    )
 
 
 def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None:
     pos = next((p for p in portfolio.positions if p.pair == signal.pair), None)
     if pos is None:
         return
-    limit_price = max(signal.price, pos.buy_price * 1.005)
+    limit_price = max(signal.price, pos.buy_price * 1.006)
     portfolio.pending_orders = [
-        o for o in portfolio.pending_orders
+        o
+        for o in portfolio.pending_orders
         if not (o.direction == "sell" and o.position_id == pos.position_id)
     ]
-    portfolio.pending_orders.append(Order(
-        order_id=str(uuid.uuid4()),
-        direction="sell",
-        pair=signal.pair,
-        rule_id=signal.rule_id,
-        limit_price=limit_price,
-        quantity=pos.quantity,
-        value=pos.quantity * limit_price,
-        position_id=pos.position_id,
-        created_at=now,
-    ))
-    logger.info("Placed SELL %s  qty=%.6f @ %.4f", signal.pair, pos.quantity, signal.price)
+    portfolio.pending_orders.append(
+        Order(
+            order_id=str(uuid.uuid4()),
+            direction="sell",
+            pair=signal.pair,
+            rule_id=signal.rule_id,
+            limit_price=limit_price,
+            quantity=pos.quantity,
+            value=pos.quantity * limit_price,
+            position_id=pos.position_id,
+            created_at=now,
+        )
+    )
+    logger.info(
+        "Placed SELL %s  qty=%.6f @ %.4f", signal.pair, pos.quantity, signal.price
+    )
 
 
 def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
@@ -277,7 +324,9 @@ def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
             return None
         return max(eligible, key=lambda r: r["recent_avg_gain_pct"])["rule_id"]
     except Exception:
-        logger.warning("Could not read rule_evaluation.json for portfolio", exc_info=True)
+        logger.warning(
+            "Could not read rule_evaluation.json for portfolio", exc_info=True
+        )
         return None
 
 
