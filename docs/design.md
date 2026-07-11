@@ -207,11 +207,10 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 
 | File | Contents |
 |---|---|
-| `data/state/signal_evaluation.json` | Aggregated interpretation of recent signal outcomes |
-| `data/state/rule_descriptions.json` | Cached plain-language descriptions of each rule version; generated once per version, reused across runs |
-| `data/state/rule_evaluation.json` | Per-rule-version scoring, status, and description based on signal history |
+| `data/state/signal_evaluation.json` | Aggregated per-rule signal statistics (win rate, avg gain, breakdown by pair and exit reason) |
+| `data/state/rule_evaluation.json` | Per-rule-version scoring, status, description, and metrics; descriptions are cached here across runs |
 | `data/state/version_comparison.json` | Results of comparing versions of the same rule; marks inferior versions for dropping |
-| `data/state/conclusions.json` | Strategic conclusions derived from the latest rule evaluation |
+| `data/state/conclusions.json` | Per-rule version direction conclusions: what the dropped modification tried, why it failed, what to try next |
 | `data/state/long_term_plan.json` | Evolving high-level direction for the strategy |
 | `data/state/idea_backlog.json` | Pool of rule ideas with status (`proposed`, `evaluated`, `implemented`, `rejected`) |
 
@@ -220,70 +219,77 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 All steps that involve reasoning use the LLM (see section 9). Steps run sequentially; each reads its inputs from persisted files and writes its output before the next step begins.
 
 #### Step 1 — Analyze results
-*Inputs*: signal ledger (signals with filled-in outcomes)  
+*Inputs*: signal ledger (SQLite `signals` table, signals with filled-in outcomes)  
 *Output*: `signal_evaluation.json`
 
-Aggregates the signal outcome data into a structured summary: overall win rate, average and max gains by pair, by time of day, by market conditions at signal time. Identifies patterns in which signals performed well or poorly.
+Aggregates signal outcome data per rule: signal count, positive rate, average gain, breakdown by exit reason and by pair.
 
 #### Step 2 — Analyze current rules
-*Inputs*: `signal_evaluation.json`, `rule_descriptions.json`, registered rule versions from `strategy/rules/`  
-*Output*: `rule_descriptions.json` (updated), `rule_evaluation.json`
+*Inputs*: signal ledger (directly from SQLite), prior `rule_evaluation.json` (description and zero-signal-cycle cache), registered rule versions from `strategy.py`  
+*Output*: `rule_evaluation.json`
 
-Processes each registered rule version independently in two sub-steps:
+Processes each active rule version in two sub-steps:
 
-1. **Describe** — for each version not already present in `rule_descriptions.json`, makes one LLM call to produce a concise plain-language description of what the rule does and the signal it looks for. Newly generated descriptions are written to `rule_descriptions.json` immediately; existing descriptions are reused as-is.
+1. **Describe** — for each version not already described in the prior `rule_evaluation.json`, makes one LLM call to produce a concise plain-language description. Descriptions are cached inside `rule_evaluation.json` and reused in subsequent runs.
 
-2. **Score** — for each version: computes signal count, average gain, max gain, positive rate, and a composite score from the signal ledger data in `signal_evaluation.json`. Determines whether the version has enough data to be scored. Flags versions that fall below the deprecation threshold.
-
-The final `rule_evaluation.json` contains both the description and the scoring for every version.
+2. **Score** — computes the following metrics from the signal ledger for each version:
+   - `signal_count`, `evaluation_days`
+   - `avg_gain_pct` — average gain across all evaluated signals
+   - `recent_avg_gain_pct` — average gain across signals within the last 48 hours of the latest signal (data-relative, not wall-clock)
+   - `positive_rate`, `avg_gain_24h`, `max_gain_24h`
+   - `score` — composite score normalised to [0, 1]
+   - `status` — `candidate` (insufficient signals), `active`, or `deprecate`
+   - `zero_signal_cycles` — consecutive cycles with no signals emitted
 
 #### Step 3 — Compare rule versions
-*Inputs*: `rule_evaluation.json`, registered rule versions from `strategy/rules/`  
+*Inputs*: `rule_evaluation.json`  
 *Output*: `version_comparison.json`
 
-For each rule that has more than one registered version, compares composite scores from `rule_evaluation.json`. If a version's score is significantly worse than the best-performing version of the same rule, it is marked for dropping. Versions still in candidate status (insufficient signal data) are excluded from comparison — they are not dropped until they have been scored. The output also captures the rationale for each drop decision. Versions marked for dropping are unregistered in step 8.
+For each rule with more than one active version, compares composite scores. Versions significantly worse than the best-performing version of the same rule are marked for dropping. Versions in `candidate` status are excluded — they are not dropped until they have been scored. The output captures the rationale for each drop decision.
 
 #### Step 4 — Derive conclusions
-*Inputs*: `rule_evaluation.json`, `version_comparison.json`, registered rule versions from `strategy/rules/`  
+*Inputs*: `rule_evaluation.json`, `version_comparison.json`  
 *Output*: `conclusions.json`
 
-Interprets the rule evaluation holistically: what kinds of signals tend to work, what market conditions correlate with good outcomes, what structural weaknesses exist in the current rule set.
+For each rule that has at least one version marked for dropping **and** at least one version being kept, makes a separate LLM call. The call receives the full version performance data (scores, descriptions) for that rule, the list of dropped versions, and the list of surviving versions. The LLM identifies what direction the dropped modification took, why it likely underperformed, and proposes a different direction to try next.
 
-#### Step 5 — Update long term plan
-*Inputs*: `conclusions.json`, existing `long_term_plan.json`  
+One LLM call is made per qualifying rule. Rules where all versions are dropped, or no versions are dropped, produce no conclusion.
+
+#### Step 5 — Update long-term plan
+*Inputs*: `conclusions.json`, `rule_evaluation.json`, existing `long_term_plan.json`  
 *Output*: `long_term_plan.json` (updated)
 
-Revises the strategic direction for the agent based on the latest conclusions. The plan is a persistent document that accumulates knowledge across many update cycles.
+Revises the strategic direction for the agent. The LLM receives both the full rule evaluation (scores and metrics for all active rules) and the version direction conclusions, so the updated plan reflects both overall rule health and specific lessons learned from version experiments. The plan is a persistent document that accumulates knowledge across many update cycles.
 
 #### Step 6 — Generate ideas
-*Inputs*: `long_term_plan.json`, `idea_backlog.json`, registered rule versions from `strategy/rules/`  
+*Inputs*: `long_term_plan.json`, `idea_backlog.json`, `rule_evaluation.json`  
 *Output*: `idea_backlog.json` (new entries appended)
 
 There are two kinds of ideas:
 - **New rule** — proposes an entirely new rule concept. If implemented, a new rule folder and `v1.py` are created.
-- **Modify rule** — proposes a revision to an existing rule. If implemented, a new version file (`v2.py`, `v3.py`, …) is added to that rule's folder.
+- **Modify rule** — proposes a **small, targeted change** to an existing rule (e.g. adjust a threshold, window length, or coefficient). Must not propose a structural rewrite — that should be a new rule instead. If implemented, a new version file (`v2.py`, `v3.py`, …) is added alongside the existing version.
 
-Ensures the backlog has sufficient open ideas (status `proposed` or `evaluated`). Each LLM call generates exactly one idea and is repeated until one of the following stop conditions is met:
+Each LLM call generates exactly one idea and is repeated until one of the following stop conditions is met:
 - There are at least 3 open ideas **and** the highest-scored open idea has a score ≥ 0.6.
 - 3 new ideas have been generated in this cycle (cap per run).
 
-If both conditions are already satisfied at the start of the step, it is skipped entirely. New ideas are added with status `proposed`.
+If stop conditions are already met at the start, the step is skipped entirely.
 
 #### Step 7 — Evaluate ideas
 *Inputs*: `long_term_plan.json`, `idea_backlog.json`  
 *Output*: `idea_backlog.json` (scores and status updated)
 
-In a single LLM call, scores **all** ideas in the backlog — both newly `proposed` and previously `evaluated` — against the long term plan, estimated feasibility, and potential signal quality. Re-evaluating existing ideas allows scores to be revised in light of updated conclusions and plan. Sets a score (0–1) for each idea, marks low-potential ones as `rejected`, and marks the rest as `evaluated`.
+In a single LLM call, scores **all** ideas in the backlog — both newly `proposed` and previously `evaluated` — against the long-term plan, estimated feasibility, and potential signal quality. Re-evaluating existing ideas allows scores to be revised in light of updated conclusions and plan. Sets a score (0–1) for each idea, marks low-potential ones as `rejected`, and marks the rest as `evaluated`.
 
 #### Step 8 — Select and implement one idea
-*Inputs*: `idea_backlog.json`, `version_comparison.json`, registered rule versions from `strategy/rules/`  
+*Inputs*: `idea_backlog.json`, `version_comparison.json`, source of the existing rule (for `modify_rule` ideas)  
 *Output*: new or updated rule version file under `strategy/rules/`, `strategy.py` (registrations updated), `idea_backlog.json` (idea marked `implemented`)
 
-Selects the highest-scored ready idea and generates the rule code:
+Selects the highest-scored `evaluated` idea and generates real, executable Python code:
 - For a **new rule** idea: creates a new rule folder and `v1.py`, registers it in `strategy.py`.
-- For a **modify rule** idea: creates the next version file in the existing rule's folder, registers it in `strategy.py` alongside the prior version.
+- For a **modify rule** idea: reads the existing rule source and generates the next version file with only the targeted change applied, registers it in `strategy.py` alongside the prior version.
 
-At most one rule version is added per pipeline run to keep changes reviewable. Simultaneously, rule versions deprecated in step 2 and inferior versions marked for dropping in step 3 are unregistered from `strategy.py` (files are kept for signal traceability).
+At most one rule version is added per pipeline run. Simultaneously, rule versions deprecated in step 2 and inferior versions marked for dropping in step 3 are unregistered from `strategy.py` (files are kept for signal traceability). Both imports and `ACTIVE_RULES` entries are guarded for idempotency.
 
 ### 8.3 Rule lifecycle
 
@@ -311,44 +317,26 @@ The model name is read from `config.yaml` and passed to the LangChain chat model
 
 ### 9.2 Structured output
 
-All LLM responses that feed into application logic are parsed into **Pydantic models** using LangChain's `.with_structured_output()`. Each pipeline step has its own output model. Examples:
+All LLM responses that feed into application logic are parsed into **Pydantic models**. Each pipeline step has its own output model:
 
 ```python
-class SignalEvaluation(BaseModel):
-    overall_positive_rate: float
-    avg_gain_24h: float
-    avg_max_gain_24h: float
-    notes: str
-
-class RuleDescription(BaseModel):
-    rule_id: str
-    description: str
-
-class RuleDescriptions(BaseModel):
-    rules: list[RuleDescription]
-
 class RuleScore(BaseModel):
-    rule_id: str          # includes version, e.g. "rule_01_spread_compression_v2"
-    description: str      # carried over from rule_descriptions.json
+    rule_id: str                # includes version, e.g. "rule_01_spread_compression_v2"
+    description: str            # cached from prior run or generated fresh
     signal_count: int
-    avg_gain_24h: float
+    evaluation_days: int
+    avg_gain_pct: float
+    recent_avg_gain_pct: float  # avg gain over signals in the last 48h of data
     positive_rate: float
-    score: float
+    avg_gain_24h: float
+    max_gain_24h: float
+    score: float                # composite, normalised to [0, 1]
     status: Literal["candidate", "active", "deprecate"]
+    zero_signal_cycles: int
 
 class RuleEvaluation(BaseModel):
     rules: list[RuleScore]
     summary: str
-
-class Conclusions(BaseModel):
-    what_works: str
-    what_doesnt: str
-    open_questions: str
-
-class LongTermPlan(BaseModel):
-    direction: str
-    priorities: list[str]
-    updated_at: str
 
 class RuleVersionComparison(BaseModel):
     rule_name: str
@@ -361,6 +349,20 @@ class VersionComparisonResult(BaseModel):
     comparisons: list[RuleVersionComparison]
     summary: str
 
+class VersionDirectionConclusion(BaseModel):
+    rule_name: str
+    dropped_versions: list[str]
+    failed_direction: str    # what the dropped version tried
+    proposed_direction: str  # different direction to explore next
+
+class Conclusions(BaseModel):
+    conclusions: list[VersionDirectionConclusion]
+
+class LongTermPlan(BaseModel):
+    direction: str
+    priorities: list[str]
+    updated_at: str
+
 class RuleIdea(BaseModel):
     idea_id: str
     title: str
@@ -368,7 +370,7 @@ class RuleIdea(BaseModel):
     rationale: str
     pseudocode: str
     kind: Literal["new_rule", "modify_rule"]
-    target_rule: str | None  # rule_name of the rule to modify; None for new_rule ideas
+    target_rule: str | None  # rule_name of the rule to modify; None for new_rule
     score: float | None
     status: Literal["proposed", "evaluated", "implemented", "rejected"]
 
@@ -377,13 +379,97 @@ class IdeaBacklog(BaseModel):
 
 class ImplementedRule(BaseModel):
     idea_id: str
-    rule_id: str
-    code: str
+    rule_id: str          # module name, e.g. "rule_13_new_concept"
+    function_name: str    # Python function name
+    code: str             # complete Python file content
 ```
 
 ---
 
-## 10. Scheduler / Main Loop
+## 10. Virtual Portfolio
+
+A simulated trading portfolio that runs on every data pull cycle (not just analysis cycles). It tracks cash, open positions, and pending limit orders, and persists state to `data/portfolio/`.
+
+### 10.1 Persistence
+
+| File | Contents |
+|---|---|
+| `data/portfolio/portfolio.json` | Current portfolio state: cash, total value, open positions, pending orders |
+| `data/portfolio/transactions.json` | Append-only log of closed positions (filled sell orders) |
+
+### 10.2 Data models
+
+```python
+class Position(BaseModel):
+    position_id: str
+    pair: str
+    rule_id: str
+    quantity: float
+    buy_price: float
+    value: float        # quantity * current_price, updated each cycle
+    opened_at: datetime
+
+class Order(BaseModel):
+    order_id: str
+    direction: Literal["buy", "sell"]
+    pair: str
+    rule_id: str
+    limit_price: float
+    quantity: float
+    value: float        # quantity * limit_price
+    position_id: str | None  # set for sell orders
+    created_at: datetime
+
+class Portfolio(BaseModel):
+    cash: float
+    value: float        # cash + sum of open position values at current prices
+    positions: list[Position]
+    pending_orders: list[Order]
+
+class Transaction(BaseModel):
+    transaction_id: str
+    pair: str
+    rule_id: str
+    quantity: float
+    buy_price: float
+    sell_price: float
+    revenue: float      # net after fee
+    gain_pct: float
+    opened_at: datetime
+    closed_at: datetime
+```
+
+### 10.3 Cycle logic
+
+Each data pull cycle executes in order:
+
+1. **Fill orders** — for each pending order, check the current tick price:
+   - Buy fills when `current_price < limit_price` (strict). Cost = `quantity × limit_price × (1 + fee)`.
+   - Sell fills when `current_price > limit_price` (strict). Revenue = `quantity × limit_price × (1 - fee)`.
+   - A filled sell creates a `Transaction` record appended to `transactions.json`.
+   - If cash would go negative, the buy fill is skipped with a warning.
+
+2. **Auto-close stale positions** — any position held for more than 24 hours (relative to the latest tick timestamp, not wall clock) gets a sell order placed at the current price. Any existing sell order for that position is cancelled first.
+
+3. **Place new orders** — finds the rule with the highest `recent_avg_gain_pct` in `rule_evaluation.json`. If it exceeds `portfolio_min_recent_gain`, signals from that rule in the current cycle are acted on:
+   - Buy signal → place a buy limit order at the signal price, spending `capital / 10`. Maximum 10 simultaneous open positions. Cash already committed to pending buy orders is deducted before checking available cash.
+   - Sell signal → place a sell limit order at the signal price. If a sell order already exists for that position, it is cancelled and replaced.
+
+4. **Update values** — all position `value` fields and `portfolio.value` are recomputed from current tick prices, then state is saved.
+
+### 10.4 Configuration
+
+| Field | Default | Meaning |
+|---|---|---|
+| `portfolio_initial_capital` | `10000.0` | Starting cash in USD |
+| `portfolio_min_recent_gain` | `0.005` | Minimum `recent_avg_gain_pct` for a rule to trigger orders |
+| `portfolio_fee` | `0.0025` | Exchange fee applied to both sides of each trade (0.25%) |
+
+---
+
+## 11. Scheduler / Main Loop
+
+
 
 The main process runs a cooperative loop with the following periodic tasks:
 
@@ -397,25 +483,24 @@ The main process runs a cooperative loop with the following periodic tasks:
 
 ---
 
-## 11. Configuration
+## 12. Configuration
 
 A single `config.yaml` at the project root controls:
 
 - Poll interval and backoff parameters
 - Hot-tier max tick retention count
 - Rule deprecation threshold and minimum signal count for scoring
-- Data directory path
+- Data directory path (SQLite database + portfolio files live here)
 - State directory path (default: `data/state/`)
-- LLM model name (e.g.: `gemini-2.0-flash`)
+- LLM model name (e.g.: `claude-cli`)
 - Backtesting data directory (default: `../crypto_alerts_llm/data/raw`)
+- Portfolio settings: `portfolio_initial_capital`, `portfolio_min_recent_gain`, `portfolio_fee`
 
 ---
 
-## 12. Open Questions / Future Work
+## 13. Open Questions / Future Work
 
-- **Storage backend**: start with flat JSON files; migrate to SQLite if query performance degrades.
 - **Signal deduplication**: if the same rule fires on consecutive ticks, subsequent signals from that rule for the same pair are suppressed for 24 hours.
-- **Sell signals**: the current design is buy-only; a symmetric sell-signal path could be added later.
 - **Alerting**: emit a notification (e.g., desktop notification, webhook) when a high-confidence buy signal fires.
 - **Backtesting**: replay historical data through the strategy to evaluate rules without waiting for real-time outcomes. The backtesting module reads from an external data directory (configurable, default `../crypto_alerts_llm/data/raw`). That directory contains hourly snapshots partitioned as `year=YYYY/month=MM/day=DD/<timestamp>.json` (full Kraken Ticker response for all pairs) and `<timestamp>_bidask.json` (top-5 order book levels per pair). The backtester feeds these snapshots through the tiered storage layer and strategy engine in chronological order, producing a signal ledger that can be evaluated immediately since all future prices are available.
 - **Multiple timeframes**: currently warm tier is hourly; finer granularity (e.g., 5-minute) could improve some rule types.

@@ -1,7 +1,7 @@
 """Signal outcome evaluator.
 
 Runs every hour. Evaluates pending buy signals:
-  1. Sell signal match — exit price = close of first warm candle after the sell signal.
+  1. Sell signal match — exit price = sell signal price (treated as fill price).
   2. Timeout — if no sell signal after 20 days, exit price = latest warm candle close.
 
 Also tracks 24h metrics (gain_24h_pct, max_gain_24h_pct) while warm candles
@@ -37,7 +37,7 @@ def evaluate_pending_signals(config: AppConfig, reference_time: datetime | None 
                FROM signals WHERE direction='buy' AND gain_24h_pct IS NULL"""
         ).fetchall()
         sell_rows = con.execute(
-            "SELECT pair, emitted_at FROM signals WHERE direction='sell'"
+            "SELECT pair, emitted_at, price_at_signal FROM signals WHERE direction='sell'"
         ).fetchall()
 
     sell_index = _build_sell_index(sell_rows)
@@ -45,12 +45,13 @@ def evaluate_pending_signals(config: AppConfig, reference_time: datetime | None 
     _resolve_pending(pending, now, sell_index, config)
 
 
-def _build_sell_index(sell_rows) -> dict[str, list[datetime]]:
-    index: dict[str, list[datetime]] = {}
+def _build_sell_index(sell_rows) -> dict[str, list[tuple[datetime, float]]]:
+    index: dict[str, list[tuple[datetime, float]]] = {}
     for r in sell_rows:
         dt = _parse_dt(r["emitted_at"])
-        if dt is not None:
-            index.setdefault(r["pair"], []).append(dt)
+        price = r["price_at_signal"]
+        if dt is not None and price is not None:
+            index.setdefault(r["pair"], []).append((dt, price))
     return index
 
 
@@ -73,7 +74,7 @@ def _update_24h_metrics(rows, now: datetime, config: AppConfig) -> None:
 
 
 def _resolve_pending(
-    pending, now: datetime, sell_index: dict[str, list[datetime]], config: AppConfig
+    pending, now: datetime, sell_index: dict[str, list[tuple[datetime, float]]], config: AppConfig
 ) -> None:
     for row in pending:
         emitted_at = _parse_dt(row["emitted_at"])
@@ -99,20 +100,17 @@ def _resolve_outcome(
     emitted_at: datetime,
     price_at_signal: float,
     now: datetime,
-    sell_index: dict[str, list[datetime]],
+    sell_index: dict[str, list[tuple[datetime, float]]],
     config: AppConfig,
 ) -> dict | None:
-    sells_after = [dt for dt in sell_index.get(pair, []) if dt > emitted_at]
+    sells_after = [(dt, p) for dt, p in sell_index.get(pair, []) if dt > emitted_at]
     if sells_after:
-        sell_time = min(sells_after)
-        exit_price = _price_after(pair, sell_time, config)
-        if exit_price is None:
-            return None
+        _, sell_price = min(sells_after, key=lambda x: x[0])
         return {
             "evaluated_at": now.isoformat(),
-            "exit_price": exit_price,
+            "exit_price": sell_price,
             "exit_reason": "sell_signal",
-            "gain_pct": exit_price / price_at_signal - 1,
+            "gain_pct": sell_price / price_at_signal - 1,
         }
 
     if now - emitted_at >= _TIMEOUT:
@@ -129,16 +127,6 @@ def _resolve_outcome(
 
     return None
 
-
-def _price_after(pair: str, after: datetime, config: AppConfig) -> float | None:
-    """Close of the first warm candle strictly after `after`, or latest if none yet."""
-    warm = storage.read_warm_candles(pair, config)
-    if not warm:
-        return None
-    candidates = [c for c in warm if c.hour > after]
-    if candidates:
-        return min(candidates, key=lambda c: c.hour).close
-    return warm[-1].close
 
 
 def _latest_price(pair: str, config: AppConfig) -> float | None:

@@ -50,7 +50,10 @@ class WarmCandle(BaseModel):
     low: float
     close: float
     avg_spread_rel: float = 0.0
-    volume: float = Field(default=0.0, description="Average volume_24h of ticks within this hour (proxy for relative market activity)")
+    volume: float = Field(
+        default=0.0,
+        description="Average volume_24h of ticks within this hour (proxy for relative market activity)",
+    )
 
 
 class ColdMonth(BaseModel):
@@ -116,3 +119,5 @@ class AppConfig(BaseModel):
     rule_zero_signal_max_cycles: int = 7  # deprecate a rule that emits 0 signals for this many consecutive analysis cycles
     portfolio_initial_capital: float = 10000.0
     portfolio_min_recent_gain: float = 0.005
+    portfolio_fee: float = 0.0025
+    portfolio_max_position_hours: int = 24

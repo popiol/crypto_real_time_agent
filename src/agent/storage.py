@@ -299,14 +299,9 @@ def recompute_cold_tier(pair: str, config: AppConfig) -> None:
 
 def reset_for_backtest(config: AppConfig) -> None:
     """Wipe all runtime data so a test run starts from a clean slate."""
-    with open_db(config.data_dir) as con:
-        for table in ("hot_ticks", "warm_candles", "cold_months", "signals"):
-            con.execute(f"DELETE FROM {table}")
-
-    for subdir in ("rules", "state"):
-        target = Path(config.data_dir) / subdir
-        if target.exists():
-            shutil.rmtree(target)
+    target = Path(config.data_dir)
+    if target.exists():
+        shutil.rmtree(target)
 
 
 # ── Signal ledger ─────────────────────────────────────────────────────────────
