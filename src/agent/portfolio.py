@@ -87,7 +87,9 @@ def run_cycle(
     new_transactions = _fill_orders(
         portfolio, current_prices, now, config.portfolio_fee
     )
-    _close_stale_positions(portfolio, current_prices, now, config.portfolio_max_position_hours)
+    _close_stale_positions(
+        portfolio, current_prices, now, config.portfolio_max_position_hours
+    )
 
     best_rule = _find_best_rule(config.state_dir, config.portfolio_min_recent_gain)
     if best_rule:
@@ -199,7 +201,10 @@ def _fill_orders(
 
 
 def _close_stale_positions(
-    portfolio: Portfolio, current_prices: dict[str, float], now: datetime, max_hours: int
+    portfolio: Portfolio,
+    current_prices: dict[str, float],
+    now: datetime,
+    max_hours: int,
 ) -> None:
     cutoff = now - timedelta(hours=max_hours)
     for pos in portfolio.positions:
@@ -289,7 +294,7 @@ def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None
     pos = next((p for p in portfolio.positions if p.pair == signal.pair), None)
     if pos is None:
         return
-    limit_price = max(signal.price, pos.buy_price * 1.005)
+    limit_price = signal.price  # max(signal.price, pos.buy_price * 1.005)
     portfolio.pending_orders = [
         o
         for o in portfolio.pending_orders
