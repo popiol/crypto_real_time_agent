@@ -5,7 +5,7 @@ Runs on every data pull cycle:
   2. Find the best rule by recent_avg_gain_pct from rule_evaluation.json.
   3. If the best rule exceeds the configured threshold, place new orders
      from its signals (buy 1/10 of current capital per signal).
-  4. Persist state to portfolio.json.
+  4. Persist state to portfolio/portfolio.json and append fills to portfolio/transactions.json.
 """
 
 import json
@@ -44,6 +44,19 @@ class Order(BaseModel):
     created_at: datetime
 
 
+class Transaction(BaseModel):
+    transaction_id: str
+    pair: str
+    rule_id: str
+    quantity: float
+    buy_price: float
+    sell_price: float
+    revenue: float
+    gain_pct: float
+    opened_at: datetime
+    closed_at: datetime
+
+
 class Portfolio(BaseModel):
     cash: float
     value: float = 0.0
@@ -70,7 +83,7 @@ def run_cycle(
     portfolio = _load(config)
     current_prices = {t.pair: t.last_price for t in ticks}
 
-    _fill_orders(portfolio, current_prices, now, config.portfolio_fee)
+    new_transactions = _fill_orders(portfolio, current_prices, now, config.portfolio_fee)
     _close_stale_positions(portfolio, current_prices, now)
 
     best_rule = _find_best_rule(config.state_dir, config.portfolio_min_recent_gain)
@@ -82,19 +95,33 @@ def run_cycle(
     for pos in portfolio.positions:
         pos.value = pos.quantity * current_prices.get(pos.pair, 0.0)
     portfolio.value = portfolio.capital(current_prices)
+
     _save(portfolio, config)
+    if new_transactions:
+        _append_transactions(new_transactions, config)
 
 
-def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: datetime, fee: float) -> None:
+def _fill_orders(
+    portfolio: Portfolio,
+    current_prices: dict[str, float],
+    now: datetime,
+    fee: float,
+) -> list[Transaction]:
     filled_ids: set[str] = set()
+    transactions: list[Transaction] = []
+
     for order in portfolio.pending_orders:
         price = current_prices.get(order.pair)
         if price is None:
             continue
+
         if order.direction == "buy" and price < order.limit_price:
             cost = order.quantity * order.limit_price * (1 + fee)
             if portfolio.cash < cost:
-                logger.warning("Skipping BUY fill for %s: insufficient cash (%.2f < %.2f)", order.pair, portfolio.cash, cost)
+                logger.warning(
+                    "Skipping BUY fill for %s: insufficient cash (%.2f < %.2f)",
+                    order.pair, portfolio.cash, cost,
+                )
                 continue
             portfolio.cash -= cost
             portfolio.positions.append(Position(
@@ -108,18 +135,38 @@ def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: da
             filled_ids.add(order.order_id)
             logger.info(
                 "Filled BUY  %s  qty=%.6f @ %.4f  cost=%.2f (fee=%.2f)  cash_remaining=%.2f",
-                order.pair, order.quantity, order.limit_price, cost, cost - order.quantity * order.limit_price, portfolio.cash,
+                order.pair, order.quantity, order.limit_price,
+                cost, cost - order.quantity * order.limit_price, portfolio.cash,
             )
+
         elif order.direction == "sell" and price > order.limit_price:
+            pos = next((p for p in portfolio.positions if p.position_id == order.position_id), None)
             revenue = order.quantity * order.limit_price * (1 - fee)
             portfolio.cash += revenue
             portfolio.positions = [p for p in portfolio.positions if p.position_id != order.position_id]
             filled_ids.add(order.order_id)
             logger.info(
                 "Filled SELL %s  qty=%.6f @ %.4f  revenue=%.2f (fee=%.2f)  cash=%.2f",
-                order.pair, order.quantity, order.limit_price, revenue, order.quantity * order.limit_price - revenue, portfolio.cash,
+                order.pair, order.quantity, order.limit_price,
+                revenue, order.quantity * order.limit_price - revenue, portfolio.cash,
             )
+            if pos is not None:
+                gain_pct = (order.limit_price - pos.buy_price) / pos.buy_price
+                transactions.append(Transaction(
+                    transaction_id=str(uuid.uuid4()),
+                    pair=order.pair,
+                    rule_id=order.rule_id,
+                    quantity=order.quantity,
+                    buy_price=pos.buy_price,
+                    sell_price=order.limit_price,
+                    revenue=revenue,
+                    gain_pct=gain_pct,
+                    opened_at=pos.opened_at,
+                    closed_at=now,
+                ))
+
     portfolio.pending_orders = [o for o in portfolio.pending_orders if o.order_id not in filled_ids]
+    return transactions
 
 
 def _close_stale_positions(portfolio: Portfolio, current_prices: dict[str, float], now: datetime) -> None:
@@ -230,8 +277,12 @@ def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
         return None
 
 
+def _portfolio_dir(config: AppConfig) -> Path:
+    return Path(config.data_dir) / "portfolio"
+
+
 def _load(config: AppConfig) -> Portfolio:
-    path = Path(config.data_dir) / "portfolio.json"
+    path = _portfolio_dir(config) / "portfolio.json"
     if path.exists():
         try:
             return Portfolio.model_validate_json(path.read_text(encoding="utf-8"))
@@ -241,6 +292,19 @@ def _load(config: AppConfig) -> Portfolio:
 
 
 def _save(portfolio: Portfolio, config: AppConfig) -> None:
-    path = Path(config.data_dir) / "portfolio.json"
+    path = _portfolio_dir(config) / "portfolio.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(portfolio.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _append_transactions(transactions: list[Transaction], config: AppConfig) -> None:
+    path = _portfolio_dir(config) / "transactions.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: list[dict] = []
+    if path.exists():
+        try:
+            existing = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            logger.warning("Could not parse transactions.json; starting fresh")
+    existing.extend(t.model_dump(mode="json") for t in transactions)
+    path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
