@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
 import src.strategy.rules.rule_18_average_directional_index_adx_.v1 as rule_18_average_directional_index_adx__v1
 import src.strategy.rules.rule_17_money_flow_index_mfi_overbough.v1 as rule_17_money_flow_index_mfi_overbough_v1
 import src.strategy.rules.rule_16_chaikin_money_flow_cmf_trend_c.v1 as rule_16_chaikin_money_flow_cmf_trend_c_v1
@@ -39,6 +40,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_16_chaikin_money_flow_cmf_trend_c_v1,
     rule_17_money_flow_index_mfi_overbough_v1,
     rule_18_average_directional_index_adx__v1,
+    rule_02_bollinger_band_v3,
 ]
 
 
