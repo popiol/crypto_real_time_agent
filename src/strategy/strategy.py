@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_15_vwap_bands_trading_rule.v2 as rule_15_vwap_bands_trading_rule_v2
 import src.strategy.rules.rule_15_vwap_bands_trading_rule.v1 as rule_15_vwap_bands_trading_rule_v1
 import src.strategy.rules.rule_14_macd_crossover_signal.v1 as rule_14_macd_crossover_signal_v1
 import src.strategy.rules.rule_13_rsi_momentum_crossover_rule.v1 as rule_13_rsi_momentum_crossover_rule_v1
@@ -31,6 +32,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_13_rsi_momentum_crossover_rule_v1,
     rule_14_macd_crossover_signal_v1,
     rule_15_vwap_bands_trading_rule_v1,
+    rule_15_vwap_bands_trading_rule_v2,
 ]
 
 
