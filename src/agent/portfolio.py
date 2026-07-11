@@ -28,6 +28,7 @@ class Position(BaseModel):
     rule_id: str
     quantity: float
     buy_price: float
+    value: float = 0.0
     opened_at: datetime
 
 
@@ -69,7 +70,7 @@ def run_cycle(
     portfolio = _load(config)
     current_prices = {t.pair: t.last_price for t in ticks}
 
-    _fill_orders(portfolio, current_prices, now)
+    _fill_orders(portfolio, current_prices, now, config.portfolio_fee)
     _close_stale_positions(portfolio, current_prices, now)
 
     best_rule = _find_best_rule(config.state_dir, config.portfolio_min_recent_gain)
@@ -78,18 +79,24 @@ def run_cycle(
     else:
         logger.debug("No rule meets recent gain threshold (%.4f); no new orders", config.portfolio_min_recent_gain)
 
+    for pos in portfolio.positions:
+        pos.value = pos.quantity * current_prices.get(pos.pair, 0.0)
     portfolio.value = portfolio.capital(current_prices)
     _save(portfolio, config)
 
 
-def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: datetime) -> None:
+def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: datetime, fee: float) -> None:
     filled_ids: set[str] = set()
     for order in portfolio.pending_orders:
         price = current_prices.get(order.pair)
         if price is None:
             continue
         if order.direction == "buy" and price < order.limit_price:
-            portfolio.cash -= order.quantity * order.limit_price
+            cost = order.quantity * order.limit_price * (1 + fee)
+            if portfolio.cash < cost:
+                logger.warning("Skipping BUY fill for %s: insufficient cash (%.2f < %.2f)", order.pair, portfolio.cash, cost)
+                continue
+            portfolio.cash -= cost
             portfolio.positions.append(Position(
                 position_id=str(uuid.uuid4()),
                 pair=order.pair,
@@ -100,17 +107,17 @@ def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: da
             ))
             filled_ids.add(order.order_id)
             logger.info(
-                "Filled BUY  %s  qty=%.6f @ %.4f  cash_remaining=%.2f",
-                order.pair, order.quantity, order.limit_price, portfolio.cash,
+                "Filled BUY  %s  qty=%.6f @ %.4f  cost=%.2f (fee=%.2f)  cash_remaining=%.2f",
+                order.pair, order.quantity, order.limit_price, cost, cost - order.quantity * order.limit_price, portfolio.cash,
             )
         elif order.direction == "sell" and price > order.limit_price:
-            revenue = order.quantity * order.limit_price
+            revenue = order.quantity * order.limit_price * (1 - fee)
             portfolio.cash += revenue
             portfolio.positions = [p for p in portfolio.positions if p.position_id != order.position_id]
             filled_ids.add(order.order_id)
             logger.info(
-                "Filled SELL %s  qty=%.6f @ %.4f  revenue=%.2f  cash=%.2f",
-                order.pair, order.quantity, order.limit_price, revenue, portfolio.cash,
+                "Filled SELL %s  qty=%.6f @ %.4f  revenue=%.2f (fee=%.2f)  cash=%.2f",
+                order.pair, order.quantity, order.limit_price, revenue, order.quantity * order.limit_price - revenue, portfolio.cash,
             )
     portfolio.pending_orders = [o for o in portfolio.pending_orders if o.order_id not in filled_ids]
 
@@ -169,7 +176,8 @@ def _place_buy(
     if len(portfolio.positions) >= 10:
         return
     spend = portfolio.capital(current_prices) / 10
-    if spend <= 0 or portfolio.cash < spend:
+    committed = sum(o.value for o in portfolio.pending_orders if o.direction == "buy")
+    if spend <= 0 or portfolio.cash - committed < spend:
         return
     qty = spend / signal.price
     portfolio.pending_orders.append(Order(
