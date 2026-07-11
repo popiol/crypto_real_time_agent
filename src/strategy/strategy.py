@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_32_bollinger_band_rejection_with_.v1 as rule_32_bollinger_band_rejection_with__v1
+import src.strategy.rules.rule_35_bollinger_band_rejection_with_.v1 as rule_35_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_34_bollinger_band_rejection_with_.v1 as rule_34_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_33_bollinger_band_rejection_with_.v1 as rule_33_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_31_bollinger_band_rejection_with_.v1 as rule_31_bollinger_band_rejection_with__v1
@@ -37,6 +38,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_32_bollinger_band_rejection_with__v1,
     rule_33_bollinger_band_rejection_with__v1,
     rule_34_bollinger_band_rejection_with__v1,
+    rule_35_bollinger_band_rejection_with__v1,
 ]
 
 
