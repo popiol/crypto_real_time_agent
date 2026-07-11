@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_15_adx_filtered_moving_average_cr.v1 as rule_15_adx_filtered_moving_average_cr_v1
 import src.strategy.rules.rule_13_macd_crossover_trend_following.v2 as rule_13_macd_crossover_trend_following_v2
 import src.strategy.rules.rule_04_arima_forecast.v4 as rule_04_arima_forecast_v4
 import src.strategy.rules.rule_04_arima_forecast.v3 as rule_04_arima_forecast_v3
@@ -37,6 +38,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_04_arima_forecast_v3,
     rule_04_arima_forecast_v4,
     rule_13_macd_crossover_trend_following_v2,
+    rule_15_adx_filtered_moving_average_cr_v1,
 ]
 
 
