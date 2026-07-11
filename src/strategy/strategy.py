@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v1 as rule_19_bollinger_band_with_volume_spi_v1
 import src.strategy.rules.rule_02_bollinger_band.v4 as rule_02_bollinger_band_v4
 import src.strategy.rules.rule_17_money_flow_index_mfi_overbough.v2 as rule_17_money_flow_index_mfi_overbough_v2
 import src.strategy.rules.rule_02_bollinger_band.v3 as rule_02_bollinger_band_v3
@@ -41,6 +42,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v3,
     rule_17_money_flow_index_mfi_overbough_v2,
     rule_02_bollinger_band_v4,
+    rule_19_bollinger_band_with_volume_spi_v1,
 ]
 
 
