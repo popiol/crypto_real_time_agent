@@ -35,9 +35,10 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 _ANALYZE_INTERVAL_CYCLES = 24  # one snapshot per hour → analyze once per day
 
 
-def run(config: AppConfig) -> None:
-    logger.info("Resetting all data for test run")
-    storage.reset_for_backtest(config)
+def run(config: AppConfig, clear: bool = False) -> None:
+    if clear:
+        logger.info("Clearing all data for test run")
+        storage.reset_for_backtest(config)
     logger.info("Starting test run from %s", config.backtest_data_dir)
 
     cycle = 0
@@ -70,9 +71,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crypto test runner (historical replay)")
     parser.add_argument("config", nargs="?", default="config.yaml", help="Path to config YAML")
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
+    parser.add_argument("--clear", action="store_true", help="Delete the data directory before starting")
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    run(load_config(args.config))
+    run(load_config(args.config), clear=args.clear)
