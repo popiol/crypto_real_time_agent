@@ -49,6 +49,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     from src.strategy.strategy import ACTIVE_RULES
 
     ledger_signals = storage.read_signals(config)
+    transaction_gains = _load_transaction_gains(config)
 
     # Load caches from the prior run's rule_evaluation.json
     prior_eval_path = state_dir / "rule_evaluation.json"
@@ -61,7 +62,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
         description = _describe(rule_id, rule_module, desc_cache, config.llm_model)
         desc_cache[rule_id] = description
-        scores.append(_score(rule_id, description, ledger_signals, zero_cycles_cache, config))
+        scores.append(_score(rule_id, description, ledger_signals, zero_cycles_cache, transaction_gains, config))
 
     try:
         summary_result = llm_structured(
@@ -131,11 +132,31 @@ def _describe(rule_id: str, rule_module, cache: dict[str, str], model: str) -> s
         return f"No description available for {rule_id}."
 
 
+def _load_transaction_gains(config: AppConfig) -> dict[str, float]:
+    """Return average transaction gain_pct per rule_id from portfolio/transactions.json."""
+    path = Path(config.data_dir) / "portfolio" / "transactions.json"
+    if not path.exists():
+        return {}
+    try:
+        txns = json.loads(path.read_text(encoding="utf-8"))
+        by_rule: dict[str, list[float]] = {}
+        for t in txns:
+            rule_id = t.get("rule_id")
+            gain = t.get("gain_pct")
+            if rule_id and gain is not None:
+                by_rule.setdefault(rule_id, []).append(gain)
+        return {rule_id: sum(gains) / len(gains) for rule_id, gains in by_rule.items()}
+    except Exception:
+        logger.warning("Could not read transactions.json for avg_transaction_gain", exc_info=True)
+        return {}
+
+
 def _score(
     rule_id: str,
     description: str,
     ledger_signals: list[dict],
     zero_cycles_cache: dict[str, int],
+    transaction_gains: dict[str, float],
     config: AppConfig,
 ) -> RuleScore:
     matching = [
@@ -159,6 +180,7 @@ def _score(
             evaluation_days=0,
             avg_gain_pct=0.0,
             recent_avg_gain_pct=0.0,
+            avg_transaction_gain=transaction_gains.get(rule_id, 0.0),
             positive_rate=0.0,
             avg_gain_24h=0.0,
             max_gain_24h=0.0,
@@ -222,6 +244,7 @@ def _score(
         evaluation_days=evaluation_days,
         avg_gain_pct=avg_gain_pct,
         recent_avg_gain_pct=recent_avg_gain_pct,
+        avg_transaction_gain=transaction_gains.get(rule_id, 0.0),
         positive_rate=positive_rate,
         avg_gain_24h=avg_gain_24h,
         max_gain_24h=max_gain_24h,

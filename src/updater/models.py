@@ -43,6 +43,7 @@ class RuleScore(BaseModel):
     evaluation_days: int
     avg_gain_pct: float
     recent_avg_gain_pct: float
+    avg_transaction_gain: float
     positive_rate: float
     avg_gain_24h: float
     max_gain_24h: float
