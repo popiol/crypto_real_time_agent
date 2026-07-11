@@ -289,7 +289,7 @@ def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None
     pos = next((p for p in portfolio.positions if p.pair == signal.pair), None)
     if pos is None:
         return
-    limit_price = max(signal.price, pos.buy_price * 1.006)
+    limit_price = max(signal.price, pos.buy_price * 1.004)
     portfolio.pending_orders = [
         o
         for o in portfolio.pending_orders
