@@ -1,4 +1,4 @@
-"""Virtual portfolio — tracks capital, positions, and pending limit orders.
+"""Virtual portfolio — tracks cash, positions, and pending limit orders.
 
 Runs on every data pull cycle:
   1. Fill any pending orders whose limit price has been reached.
@@ -38,15 +38,24 @@ class Order(BaseModel):
     rule_id: str
     limit_price: float
     quantity: float
-    capital_to_spend: float
+    value: float
     position_id: str | None = None
     created_at: datetime
 
 
 class Portfolio(BaseModel):
-    capital: float
+    cash: float
+    value: float = 0.0
     positions: list[Position] = Field(default_factory=list)
     pending_orders: list[Order] = Field(default_factory=list)
+
+    def capital(self, current_prices: dict[str, float]) -> float:
+        positions_value = sum(
+            p.quantity * current_prices[p.pair]
+            for p in self.positions
+            if p.pair in current_prices
+        )
+        return self.cash + positions_value
 
 
 def run_cycle(
@@ -65,10 +74,11 @@ def run_cycle(
 
     best_rule = _find_best_rule(config.state_dir, config.portfolio_min_recent_gain)
     if best_rule:
-        _place_orders(portfolio, signals, best_rule, now)
+        _place_orders(portfolio, signals, best_rule, now, current_prices)
     else:
         logger.debug("No rule meets recent gain threshold (%.4f); no new orders", config.portfolio_min_recent_gain)
 
+    portfolio.value = portfolio.capital(current_prices)
     _save(portfolio, config)
 
 
@@ -79,7 +89,7 @@ def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: da
         if price is None:
             continue
         if order.direction == "buy" and price < order.limit_price:
-            portfolio.capital -= order.capital_to_spend
+            portfolio.cash -= order.quantity * order.limit_price
             portfolio.positions.append(Position(
                 position_id=str(uuid.uuid4()),
                 pair=order.pair,
@@ -90,17 +100,17 @@ def _fill_orders(portfolio: Portfolio, current_prices: dict[str, float], now: da
             ))
             filled_ids.add(order.order_id)
             logger.info(
-                "Filled BUY  %s  qty=%.6f @ %.4f  capital_remaining=%.2f",
-                order.pair, order.quantity, order.limit_price, portfolio.capital,
+                "Filled BUY  %s  qty=%.6f @ %.4f  cash_remaining=%.2f",
+                order.pair, order.quantity, order.limit_price, portfolio.cash,
             )
         elif order.direction == "sell" and price > order.limit_price:
             revenue = order.quantity * order.limit_price
-            portfolio.capital += revenue
+            portfolio.cash += revenue
             portfolio.positions = [p for p in portfolio.positions if p.position_id != order.position_id]
             filled_ids.add(order.order_id)
             logger.info(
-                "Filled SELL %s  qty=%.6f @ %.4f  revenue=%.2f  capital=%.2f",
-                order.pair, order.quantity, order.limit_price, revenue, portfolio.capital,
+                "Filled SELL %s  qty=%.6f @ %.4f  revenue=%.2f  cash=%.2f",
+                order.pair, order.quantity, order.limit_price, revenue, portfolio.cash,
             )
     portfolio.pending_orders = [o for o in portfolio.pending_orders if o.order_id not in filled_ids]
 
@@ -113,12 +123,10 @@ def _close_stale_positions(portfolio: Portfolio, current_prices: dict[str, float
         price = current_prices.get(pos.pair)
         if price is None:
             continue
-        already = any(
-            o.direction == "sell" and o.position_id == pos.position_id
-            for o in portfolio.pending_orders
-        )
-        if already:
-            continue
+        portfolio.pending_orders = [
+            o for o in portfolio.pending_orders
+            if not (o.direction == "sell" and o.position_id == pos.position_id)
+        ]
         portfolio.pending_orders.append(Order(
             order_id=str(uuid.uuid4()),
             direction="sell",
@@ -126,7 +134,7 @@ def _close_stale_positions(portfolio: Portfolio, current_prices: dict[str, float
             rule_id=pos.rule_id,
             limit_price=price,
             quantity=pos.quantity,
-            capital_to_spend=0.0,
+            value=pos.quantity * price,
             position_id=pos.position_id,
             created_at=now,
         ))
@@ -141,54 +149,62 @@ def _place_orders(
     signals: list[BuySignal | SellSignal],
     best_rule: str,
     now: datetime,
+    current_prices: dict[str, float],
 ) -> None:
     for signal in signals:
         if signal.rule_id != best_rule:
             continue
         if isinstance(signal, BuySignal):
-            spend = portfolio.capital / 10
-            if spend <= 0:
-                continue
-            qty = spend / signal.price
-            portfolio.pending_orders.append(Order(
-                order_id=str(uuid.uuid4()),
-                direction="buy",
-                pair=signal.pair,
-                rule_id=signal.rule_id,
-                limit_price=signal.price,
-                quantity=qty,
-                capital_to_spend=spend,
-                created_at=now,
-            ))
-            logger.info(
-                "Placed BUY  %s  qty=%.6f @ %.4f  spend=%.2f",
-                signal.pair, qty, signal.price, spend,
-            )
+            _place_buy(portfolio, signal, now, current_prices)
         elif isinstance(signal, SellSignal):
-            pos = next((p for p in portfolio.positions if p.pair == signal.pair), None)
-            if pos is None:
-                continue
-            already = any(
-                o.direction == "sell" and o.position_id == pos.position_id
-                for o in portfolio.pending_orders
-            )
-            if already:
-                continue
-            portfolio.pending_orders.append(Order(
-                order_id=str(uuid.uuid4()),
-                direction="sell",
-                pair=signal.pair,
-                rule_id=signal.rule_id,
-                limit_price=signal.price,
-                quantity=pos.quantity,
-                capital_to_spend=0.0,
-                position_id=pos.position_id,
-                created_at=now,
-            ))
-            logger.info(
-                "Placed SELL %s  qty=%.6f @ %.4f",
-                signal.pair, pos.quantity, signal.price,
-            )
+            _place_sell(portfolio, signal, now)
+
+
+def _place_buy(
+    portfolio: Portfolio,
+    signal: BuySignal,
+    now: datetime,
+    current_prices: dict[str, float],
+) -> None:
+    if len(portfolio.positions) >= 10:
+        return
+    spend = portfolio.capital(current_prices) / 10
+    if spend <= 0 or portfolio.cash < spend:
+        return
+    qty = spend / signal.price
+    portfolio.pending_orders.append(Order(
+        order_id=str(uuid.uuid4()),
+        direction="buy",
+        pair=signal.pair,
+        rule_id=signal.rule_id,
+        limit_price=signal.price,
+        quantity=qty,
+        value=qty * signal.price,
+        created_at=now,
+    ))
+    logger.info("Placed BUY  %s  qty=%.6f @ %.4f  spend=%.2f", signal.pair, qty, signal.price, spend)
+
+
+def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None:
+    pos = next((p for p in portfolio.positions if p.pair == signal.pair), None)
+    if pos is None:
+        return
+    portfolio.pending_orders = [
+        o for o in portfolio.pending_orders
+        if not (o.direction == "sell" and o.position_id == pos.position_id)
+    ]
+    portfolio.pending_orders.append(Order(
+        order_id=str(uuid.uuid4()),
+        direction="sell",
+        pair=signal.pair,
+        rule_id=signal.rule_id,
+        limit_price=signal.price,
+        quantity=pos.quantity,
+        value=pos.quantity * signal.price,
+        position_id=pos.position_id,
+        created_at=now,
+    ))
+    logger.info("Placed SELL %s  qty=%.6f @ %.4f", signal.pair, pos.quantity, signal.price)
 
 
 def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
@@ -212,8 +228,8 @@ def _load(config: AppConfig) -> Portfolio:
         try:
             return Portfolio.model_validate_json(path.read_text(encoding="utf-8"))
         except Exception:
-            logger.warning("Could not parse portfolio.json; resetting to initial capital")
-    return Portfolio(capital=config.portfolio_initial_capital)
+            logger.warning("Could not parse portfolio.json; resetting to initial cash")
+    return Portfolio(cash=config.portfolio_initial_capital)
 
 
 def _save(portfolio: Portfolio, config: AppConfig) -> None:
