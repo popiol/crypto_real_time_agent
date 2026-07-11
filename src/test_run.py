@@ -11,7 +11,7 @@ import logging
 
 import yaml
 
-from src.agent import backtest_collector, storage
+from src.agent import backtest_collector, portfolio as _portfolio, storage
 from src.agent.loop import persist_signals, run_strategy
 from src.agent.models import AppConfig
 from src.analyze import run as analyze_run
@@ -56,7 +56,9 @@ def run(config: AppConfig) -> None:
         except Exception:
             logger.exception("Storage write failed")
 
-        persist_signals(run_strategy(ticks, config), config)
+        signals = run_strategy(ticks, config)
+        persist_signals(signals, config)
+        _portfolio.run_cycle(ticks, signals, config)
         process_run(config, reference_time=ticks[0].polled_at)
 
         cycle += 1
