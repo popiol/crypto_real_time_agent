@@ -120,4 +120,4 @@ class AppConfig(BaseModel):
     portfolio_initial_capital: float = 10000.0
     portfolio_min_recent_gain: float = 0.005
     portfolio_fee: float = 0.0025
-    portfolio_max_position_hours: int = 24 * 20
+    portfolio_max_position_hours: int = 24

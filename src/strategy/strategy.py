@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_02_bollinger_band.v6 as rule_02_bollinger_band_v6
 import src.strategy.rules.rule_20_keltner_channel_mean_reversion.v2 as rule_20_keltner_channel_mean_reversion_v2
 import src.strategy.rules.rule_20_keltner_channel_mean_reversion.v1 as rule_20_keltner_channel_mean_reversion_v1
 import src.strategy.rules.rule_02_bollinger_band.v5 as rule_02_bollinger_band_v5
@@ -47,6 +48,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v5,
     rule_20_keltner_channel_mean_reversion_v1,
     rule_20_keltner_channel_mean_reversion_v2,
+    rule_02_bollinger_band_v6,
 ]
 
 
