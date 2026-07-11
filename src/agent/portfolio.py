@@ -328,10 +328,14 @@ def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
         return None
     try:
         rules = json.loads(path.read_text(encoding="utf-8")).get("rules", [])
-        eligible = [r for r in rules if r.get("recent_avg_gain_pct", 0.0) > min_gain]
+
+        def _combined(r: dict) -> float:
+            return r.get("recent_avg_gain_pct", 0.0) + r.get("avg_transaction_gain", 0.0)
+
+        eligible = [r for r in rules if _combined(r) > min_gain]
         if not eligible:
             return None
-        return max(eligible, key=lambda r: r["recent_avg_gain_pct"])["rule_id"]
+        return max(eligible, key=_combined)["rule_id"]
     except Exception:
         logger.warning(
             "Could not read rule_evaluation.json for portfolio", exc_info=True
