@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
+import src.strategy.rules.rule_06_kalman_velocity.v2 as rule_06_kalman_velocity_v2
 import src.strategy.rules.rule_07_order_book_imbalance.v3 as rule_07_order_book_imbalance_v3
 import src.strategy.rules.rule_01_spread_compression.v2 as rule_01_spread_compression_v2
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
@@ -53,6 +54,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v2,
     rule_01_spread_compression_v2,
     rule_07_order_book_imbalance_v3,
+    rule_06_kalman_velocity_v2,
 ]
 
 
