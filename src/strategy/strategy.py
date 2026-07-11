@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_23_bollinger_band_breach_with_eng.v1 as rule_23_bollinger_band_breach_with_eng_v1
 import src.strategy.rules.rule_02_bollinger_band.v8 as rule_02_bollinger_band_v8
 import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v3 as rule_19_bollinger_band_with_volume_spi_v3
 import src.strategy.rules.rule_22_bollinger_band_re_entry_with_v.v1 as rule_22_bollinger_band_re_entry_with_v_v1
@@ -26,7 +27,6 @@ import src.strategy.rules.rule_18_average_directional_index_adx_.v2 as rule_18_a
 import src.strategy.rules.rule_02_bollinger_band.v6 as rule_02_bollinger_band_v6
 import src.strategy.rules.rule_20_keltner_channel_mean_reversion.v2 as rule_20_keltner_channel_mean_reversion_v2
 import src.strategy.rules.rule_20_keltner_channel_mean_reversion.v1 as rule_20_keltner_channel_mean_reversion_v1
-import src.strategy.rules.rule_02_bollinger_band.v5 as rule_02_bollinger_band_v5
 import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v1 as rule_19_bollinger_band_with_volume_spi_v1
 import src.strategy.rules.rule_02_bollinger_band.v4 as rule_02_bollinger_band_v4
 import src.strategy.rules.rule_17_money_flow_index_mfi_overbough.v2 as rule_17_money_flow_index_mfi_overbough_v2
@@ -53,7 +53,6 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_17_money_flow_index_mfi_overbough_v2,
     rule_02_bollinger_band_v4,
     rule_19_bollinger_band_with_volume_spi_v1,
-    rule_02_bollinger_band_v5,
     rule_20_keltner_channel_mean_reversion_v1,
     rule_20_keltner_channel_mean_reversion_v2,
     rule_02_bollinger_band_v6,
@@ -65,6 +64,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_22_bollinger_band_re_entry_with_v_v1,
     rule_19_bollinger_band_with_volume_spi_v3,
     rule_02_bollinger_band_v8,
+    rule_23_bollinger_band_breach_with_eng_v1,
 ]
 
 
