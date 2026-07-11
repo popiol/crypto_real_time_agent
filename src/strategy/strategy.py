@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
+import src.strategy.rules.rule_19_bollinger_band_with_volume_spi.v3 as rule_19_bollinger_band_with_volume_spi_v3
 import src.strategy.rules.rule_22_bollinger_band_re_entry_with_v.v1 as rule_22_bollinger_band_re_entry_with_v_v1
 import src.strategy.rules.rule_21_bollinger_band_breakout_with_a.v1 as rule_21_bollinger_band_breakout_with_a_v1
 import src.strategy.rules.rule_15_vwap_bands_trading_rule.v3 as rule_15_vwap_bands_trading_rule_v3
@@ -61,6 +62,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_15_vwap_bands_trading_rule_v3,
     rule_21_bollinger_band_breakout_with_a_v1,
     rule_22_bollinger_band_re_entry_with_v_v1,
+    rule_19_bollinger_band_with_volume_spi_v3,
 ]
 
 
