@@ -179,8 +179,12 @@ def _score(
     avg_gain_pct = sum(gains_pct) / len(gains_pct)
     positive_rate = sum(1 for g in gains_pct if g > 0) / len(gains_pct)
 
-    cutoff_48h = datetime.now(timezone.utc) - timedelta(hours=48)
-    recent = [s for s in matching if s.get("emitted_at") and _parse(s["emitted_at"]) >= cutoff_48h]
+    latest_ts = max((_parse(s["emitted_at"]) for s in matching if s.get("emitted_at")), default=None)
+    cutoff_48h = (latest_ts - timedelta(hours=48)) if latest_ts else None
+    recent = [
+        s for s in matching
+        if cutoff_48h and s.get("emitted_at") and _parse(s["emitted_at"]) >= cutoff_48h
+    ]
     recent_gains = [s["outcome"]["gain_pct"] for s in recent]
     recent_avg_gain_pct = sum(recent_gains) / len(recent_gains) if recent_gains else 0.0
 
