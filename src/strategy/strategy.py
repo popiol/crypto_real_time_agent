@@ -15,9 +15,9 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_32_bollinger_band_rejection_with_.v1 as rule_32_bollinger_band_rejection_with__v1
+import src.strategy.rules.rule_34_bollinger_band_rejection_with_.v1 as rule_34_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_33_bollinger_band_rejection_with_.v1 as rule_33_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_31_bollinger_band_rejection_with_.v1 as rule_31_bollinger_band_rejection_with__v1
-import src.strategy.rules.rule_30_bollinger_band_breach_with_mfi.v1 as rule_30_bollinger_band_breach_with_mfi_v1
 import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v1 as rule_24_bollinger_band_breach_with_mfi_v1
 import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v2 as rule_24_bollinger_band_breach_with_mfi_v2
 import src.strategy.rules.rule_28_bollinger_band_reversal_with_c.v1 as rule_28_bollinger_band_reversal_with_c_v1
@@ -33,10 +33,10 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_28_bollinger_band_reversal_with_c_v1,
     rule_24_bollinger_band_breach_with_mfi_v1,
     rule_24_bollinger_band_breach_with_mfi_v2,
-    rule_30_bollinger_band_breach_with_mfi_v1,
     rule_31_bollinger_band_rejection_with__v1,
     rule_32_bollinger_band_rejection_with__v1,
     rule_33_bollinger_band_rejection_with__v1,
+    rule_34_bollinger_band_rejection_with__v1,
 ]
 
 
