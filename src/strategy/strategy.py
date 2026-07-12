@@ -14,12 +14,11 @@ from __future__ import annotations
 import logging
 from types import ModuleType
 
-import src.strategy.rules.rule_32_bollinger_band_rejection_with_.v1 as rule_32_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_36_bollinger_band_rejection_with_.v1 as rule_36_bollinger_band_rejection_with__v1
+import src.strategy.rules.rule_37_bollinger_band_breach_with_eng.v1 as rule_37_bollinger_band_breach_with_eng_v1
 import src.strategy.rules.rule_35_bollinger_band_rejection_with_.v1 as rule_35_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_34_bollinger_band_rejection_with_.v1 as rule_34_bollinger_band_rejection_with__v1
 import src.strategy.rules.rule_33_bollinger_band_rejection_with_.v1 as rule_33_bollinger_band_rejection_with__v1
-import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v1 as rule_24_bollinger_band_breach_with_mfi_v1
 import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v2 as rule_24_bollinger_band_breach_with_mfi_v2
 import src.strategy.rules.rule_28_bollinger_band_reversal_with_c.v1 as rule_28_bollinger_band_reversal_with_c_v1
 import src.strategy.rules.rule_26_bollinger_band_breach_with_mfi.v1 as rule_26_bollinger_band_breach_with_mfi_v1
@@ -32,13 +31,12 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_02_bollinger_band_v2,
     rule_26_bollinger_band_breach_with_mfi_v1,
     rule_28_bollinger_band_reversal_with_c_v1,
-    rule_24_bollinger_band_breach_with_mfi_v1,
     rule_24_bollinger_band_breach_with_mfi_v2,
-    rule_32_bollinger_band_rejection_with__v1,
     rule_33_bollinger_band_rejection_with__v1,
     rule_34_bollinger_band_rejection_with__v1,
     rule_35_bollinger_band_rejection_with__v1,
     rule_36_bollinger_band_rejection_with__v1,
+    rule_37_bollinger_band_breach_with_eng_v1,
 ]
 
 
