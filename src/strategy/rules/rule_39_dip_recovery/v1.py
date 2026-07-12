@@ -35,10 +35,11 @@ def _trend_confirms(warm: list) -> bool:
 
 
 def _dip_depth(warm: list) -> tuple[float, float]:
-    """Return (depth, low_after_high) where low is taken from candles after the 24h peak."""
-    high_idx = max(range(len(warm)), key=lambda i, w=warm: w[i].high)
-    high_24h = warm[high_idx].high
-    candles_after = warm[high_idx + 1 :]
+    """Return (depth, low_after_high) where high and low are from completed candles only (warm[:-1])."""
+    completed = warm[:-1]
+    high_idx = max(range(len(completed)), key=lambda i, w=completed: w[i].high)
+    high_24h = completed[high_idx].high
+    candles_after = completed[high_idx + 1 :]
     if not candles_after or high_24h == 0:
         return 0.0, 0.0
     low_24h = min(c.low for c in candles_after)
@@ -53,8 +54,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             continue
 
         warm = pd.warm
-        last_candle = warm[-1]
-        recent_high = last_candle.high
+        last_completed = warm[-2]
+        recent_high = last_completed.high
 
         if recent_high == 0:
             continue
