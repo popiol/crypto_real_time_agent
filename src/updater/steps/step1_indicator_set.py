@@ -96,7 +96,7 @@ class _IndicatorSpecList(BaseModel):
     indicators: list[_IndicatorSpec]
 
 
-def run(config: AppConfig, state_dir: Path) -> None:
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     set_path = paths.indicator_set(state_dir)
     plan_path = paths.next_cycle_plan(state_dir)
 

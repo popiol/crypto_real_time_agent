@@ -24,7 +24,6 @@ import uuid
 from pathlib import Path
 from pydantic import BaseModel
 
-from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.llm import llm_structured
@@ -44,21 +43,18 @@ class _Diagnosis(BaseModel):
     diagnosis: str
 
 
-def run(config: AppConfig, state_dir: Path) -> None:
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     traces_dir = paths.traces_dir(state_dir)
     traces_dir.mkdir(exist_ok=True)
 
-    rule_id, cycle_id = _resolve_target_rule(state_dir, config)
+    rule_id, trace_cycle_id = _resolve_target_rule(state_dir, cycle_id)
     if rule_id is None:
         logger.info("No implemented rule to trace; skipping episodic trace step")
         return
-    if cycle_id is None:
-        logger.warning("No quote data available; skipping episodic trace step")
-        return
 
-    trace_path = paths.trace_file(state_dir, cycle_id)
+    trace_path = paths.trace_file(state_dir, trace_cycle_id)
     if trace_path.exists():
-        logger.info("Trace for cycle %s already exists; skipping", cycle_id)
+        logger.info("Trace for cycle %s already exists; skipping", trace_cycle_id)
         return
 
     rule_score = _load_rule_score(state_dir, rule_id)
@@ -84,7 +80,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     trace = EpisodicTrace(
         trace_id=str(uuid.uuid4()),
-        cycle_id=cycle_id,
+        cycle_id=trace_cycle_id,
         hypothesis=hypothesis,
         rule_id=rule_id,
         indicator_set_version=indicator_set_version,
@@ -101,14 +97,21 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
 
 def _resolve_target_rule(
-    state_dir: Path, config: AppConfig
-) -> tuple[str | None, str | None]:
-    """Return (rule_id, cycle_id) for the rule to trace."""
+    state_dir: Path, cycle_id: str
+) -> tuple[str | None, str]:
+    """Return (rule_id, cycle_id) for the rule to trace.
+
+    Uses the cycle_id recorded in last_implemented.json — the cycle that
+    actually implemented this rule, which is always written alongside
+    rule_id (see _write_last_implemented). Only the fallback paths below,
+    where there's no rule-specific cycle to report, use the current
+    pipeline cycle_id instead.
+    """
     last_path = paths.last_implemented(state_dir)
     if last_path.exists():
         try:
             data = json.loads(last_path.read_text(encoding="utf-8"))
-            return data.get("rule_id"), data.get("cycle_id") or _quote_cycle_id(config)
+            return data["rule_id"], data["cycle_id"]
         except Exception:
             logger.warning("Could not read last_implemented.json", exc_info=True)
 
@@ -122,17 +125,11 @@ def _resolve_target_rule(
             active = [r for r in evaluation.rules if r.status in ("active", "candidate")]
             if active:
                 newest = min(active, key=lambda r: r.evaluation_days)
-                return newest.rule_id, _quote_cycle_id(config)
+                return newest.rule_id, cycle_id
         except Exception:
             logger.warning("Could not read rule_evaluation.json for trace target", exc_info=True)
 
-    return None, _quote_cycle_id(config)
-
-
-def _quote_cycle_id(config: AppConfig) -> str | None:
-    """Return a cycle identifier derived from the most recently processed quote."""
-    latest = storage.latest_quote_time(config)
-    return latest.strftime("%Y-%m-%dT%H-%M-%S") if latest else None
+    return None, cycle_id
 
 
 def _load_rule_score(state_dir: Path, rule_id: str) -> RuleScore | None:

@@ -26,7 +26,7 @@ from src.updater.models import IndicatorSet
 logger = logging.getLogger(__name__)
 
 
-def run(config: AppConfig, state_dir: Path) -> None:
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     values_path = paths.indicator_values(state_dir)
     set_path = paths.indicator_set(state_dir)
     if not set_path.exists():

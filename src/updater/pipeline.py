@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.steps import (
@@ -59,11 +60,19 @@ def run(config: AppConfig) -> None:
     state_dir = Path(config.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Strategy Updater pipeline starting")
+    # Computed once and threaded through every step, rather than each step
+    # independently re-deriving "what cycle is this" from quote data.
+    latest_quote = storage.latest_quote_time(config)
+    if latest_quote is None:
+        logger.info("No quote data yet; skipping Strategy Updater pipeline run")
+        return
+    cycle_id = latest_quote.strftime("%Y-%m-%dT%H-%M-%S")
+
+    logger.info("Strategy Updater pipeline starting (cycle_id=%s)", cycle_id)
     for name, step_fn in _STEPS:
         logger.info("Step %s", name)
         try:
-            step_fn(config, state_dir)
+            step_fn(config, state_dir, cycle_id)
         except Exception:
             logger.exception("Step %s failed; continuing with remaining steps", name)
     logger.info("Strategy Updater pipeline complete")

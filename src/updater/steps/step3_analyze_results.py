@@ -20,7 +20,7 @@ from src.updater.models import PairMetrics, RuleSignalEvaluation, SignalEvaluati
 logger = logging.getLogger(__name__)
 
 
-def run(config: AppConfig, state_dir: Path) -> None:
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     evaluated = [
         r for r in storage.read_signals(config)
         if r.get("outcome") is not None and r.get("direction", "buy") == "buy"

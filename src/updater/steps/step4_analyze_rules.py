@@ -40,7 +40,7 @@ class _RuleDesc(BaseModel):
     description: str
 
 
-def run(config: AppConfig, state_dir: Path) -> None:
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     from src.strategy.strategy import get_active_rule
 
     active_rule = get_active_rule(config)

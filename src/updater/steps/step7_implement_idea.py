@@ -47,7 +47,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 import src.agent.models as _agent_models
-from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.code_diff import CodeDiff, apply_changes
@@ -204,7 +203,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 # ── Main run ──────────────────────────────────────────────────────────────────
 
 
-def run(config: AppConfig, state_dir: Path) -> None:
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     # Load previous cycle's plan and context
     current_plan = _load_current_plan(state_dir)
     last_rule_id, _last_cycle_id = _load_last_implemented(state_dir)
@@ -269,26 +268,13 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     # Write last_implemented.json for the new rule
     if implemented_rule_id:
-        cycle_id = _cycle_id(config)
-        if cycle_id is None:
-            logger.warning(
-                "No quote data available; skipping last_implemented.json write for %s",
-                implemented_rule_id,
-            )
-        else:
-            _write_last_implemented(state_dir, implemented_rule_id, cycle_id)
+        _write_last_implemented(state_dir, implemented_rule_id, cycle_id)
 
     # Write next_cycle_plan.json based on previous rule's performance
     _write_next_cycle_plan(state_dir, last_rule_id, analysis, config)
 
 
 # ── Context loading ───────────────────────────────────────────────────────────
-
-
-def _cycle_id(config: AppConfig) -> str | None:
-    """Return a cycle identifier derived from the most recently processed quote."""
-    latest = storage.latest_quote_time(config)
-    return latest.strftime("%Y-%m-%dT%H-%M-%S") if latest else None
 
 
 def _load_current_plan(state_dir: Path) -> NextCyclePlan:
