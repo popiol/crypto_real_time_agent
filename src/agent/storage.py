@@ -367,6 +367,7 @@ def _signal_row_to_dict(row) -> dict:
         if row["gain_24h_pct"] is not None:
             outcome["gain_24h_pct"] = row["gain_24h_pct"]
             outcome["max_gain_24h_pct"] = row["max_gain_24h_pct"]
+    indicators = json.loads(row["indicators_json"]) if row["indicators_json"] else {}
     return {
         "signal_id": row["signal_id"],
         "direction": row["direction"],
@@ -375,5 +376,6 @@ def _signal_row_to_dict(row) -> dict:
         "emitted_at": row["emitted_at"],
         "price_at_signal": row["price_at_signal"],
         "confidence": row["confidence"],
+        "indicators": indicators,
         "outcome": outcome,
     }

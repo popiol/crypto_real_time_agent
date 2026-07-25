@@ -10,7 +10,6 @@ from __future__ import annotations
 from pathlib import Path
 
 INDICATOR_SET = "indicator_set.json"
-INDICATOR_VALUES = "indicator_values.json"
 NEXT_CYCLE_PLAN = "next_cycle_plan.json"
 SIGNAL_EVALUATION = "signal_evaluation.json"
 RULE_EVALUATION = "rule_evaluation.json"
@@ -25,10 +24,6 @@ LONG_TERM_PLAN = "long_term_plan.json"
 
 def indicator_set(state_dir: Path) -> Path:
     return state_dir / INDICATOR_SET
-
-
-def indicator_values(state_dir: Path) -> Path:
-    return state_dir / INDICATOR_VALUES
 
 
 def next_cycle_plan(state_dir: Path) -> Path:

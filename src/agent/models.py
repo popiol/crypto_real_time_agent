@@ -88,6 +88,11 @@ class BuySignal(BaseModel):
     price: float
     rule_id: str = ""
     confidence: float | None = None
+    indicators: dict[str, float | None] = Field(
+        default_factory=dict,
+        description="Indicator values at signal time, filled in by src.agent.loop "
+        "right after find_signals() returns; empty until then",
+    )
 
 
 class SellSignal(BaseModel):
@@ -96,6 +101,11 @@ class SellSignal(BaseModel):
     price: float
     rule_id: str = ""
     confidence: float | None = None
+    indicators: dict[str, float | None] = Field(
+        default_factory=dict,
+        description="Indicator values at signal time, filled in by src.agent.loop "
+        "right after find_signals() returns; empty until then",
+    )
 
 
 class AppConfig(BaseModel):

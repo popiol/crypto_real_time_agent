@@ -9,14 +9,17 @@ Runs continuously:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 import uuid
+from pathlib import Path
 
 from src.agent import collector, portfolio as _portfolio, storage
 from src.agent.db import open_db
 from src.agent.models import AppConfig, BuySignal, PairData, SellSignal, Tick
 import src.strategy.strategy as _strategy
+from src.updater import indicators as _indicators
 
 logger = logging.getLogger(__name__)
 
@@ -27,17 +30,40 @@ def _append_signals(signals: list[BuySignal | SellSignal], config: AppConfig) ->
     with open_db(config.data_dir) as con:
         con.executemany(
             """INSERT INTO signals
-               (signal_id, direction, pair, rule_id, emitted_at, price_at_signal, confidence)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               (signal_id, direction, pair, rule_id, emitted_at, price_at_signal,
+                confidence, indicators_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             [
                 (
                     str(uuid.uuid4()),
                     "sell" if isinstance(s, SellSignal) else "buy",
                     s.pair, s.rule_id, s.timestamp.isoformat(), s.price, s.confidence,
+                    json.dumps(s.indicators),
                 )
                 for s in signals
             ],
         )
+
+
+def _attach_indicators(
+    signals: list[BuySignal | SellSignal],
+    market_data: dict[str, PairData],
+    config: AppConfig,
+) -> None:
+    """Snapshot indicator values for each signal's pair at signal-creation time.
+
+    This is the only point in the system where a signal's pair still has its
+    causally-correct tier data available (data.warm rolls off after 24h, so
+    recomputing later — once a signal resolves, up to 20 days on — would read
+    stale/unrelated market state instead).
+    """
+    indicator_set = _indicators.load_indicator_set(Path(config.state_dir))
+    if indicator_set is None or not signals:
+        return
+    for signal in signals:
+        pair_data = market_data.get(signal.pair)
+        if pair_data is not None:
+            signal.indicators = _indicators.compute_indicators(indicator_set, pair_data)
 
 
 def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellSignal]:
@@ -52,10 +78,12 @@ def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellS
         }
         signals = list(_strategy.find_signals(market_data, config))
         volume_usd = {t.pair: t.volume_24h * t.last_price for t in ticks}
-        return [
+        signals = [
             s for s in signals
             if isinstance(s, SellSignal) or volume_usd.get(s.pair, 0.0) >= _MIN_VOLUME_24H_USD
         ]
+        _attach_indicators(signals, market_data, config)
+        return signals
     except Exception:
         logger.exception("Strategy execution failed")
         return []

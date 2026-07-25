@@ -134,7 +134,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 
 Exactly one rule is active at a time. The active rule is *state*, not code: `find_signals()` reads `data/state/last_implemented.json` (§8.1) on every call and dynamically imports whichever rule module it names, then calls that module's `signal()` function. The Strategy Updater never edits `strategy.py` itself — this matches the Strategy Updater's one-hypothesis-per-cycle learning loop (§8): there is always exactly one hypothesis under test, never a portfolio of concurrently running rules. Rules are purely functional — they read data and return signals; they have no side effects.
 
-**Data tier limits.** Every rule receives `data.hot` (≤~300 recent ticks, ~5 minutes), `data.warm` (at most 24 hourly OHLC candles — never more), and `data.cold` (one aggregate row per calendar month: min/max/avg price, avg daily spread, candle count — not a time series, §4.1). An indicator whose lookback exceeds 24 hourly candles cannot be computed from `data.warm`, and `data.cold` cannot substitute for it since it holds no individual hourly/daily closes — only coarse monthly aggregates. A rule that ignores this will pass syntax/type validation but silently return `[]` forever against real data (§8.2 Step 5 prompts the generating LLM with this constraint explicitly, including during fix attempts).
+**Data tier limits.** Every rule receives `data.hot` (≤~300 recent ticks, ~5 minutes), `data.warm` (at most 24 hourly OHLC candles — never more), and `data.cold` (one aggregate row per calendar month: min/max/avg price, avg daily spread, candle count — not a time series, §4.1). An indicator whose lookback exceeds 24 hourly candles cannot be computed from `data.warm`, and `data.cold` cannot substitute for it since it holds no individual hourly/daily closes — only coarse monthly aggregates. A rule that ignores this will pass syntax/type validation but silently return `[]` forever against real data (§8.2 Step 4 prompts the generating LLM with this constraint explicitly, including during fix attempts).
 
 Directory layout:
 
@@ -151,7 +151,7 @@ strategy/
 
 ### 5.3 Rule versioning
 
-Each rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When the Strategy Updater implements a new rule idea (§8.2 Step 5), it writes the new `rule_id` to `data/state/last_implemented.json` — a `fix` idea's version file is added alongside the previous version of the same rule, a `new_rule` idea's file goes in a new folder. Either way, the new version immediately becomes the sole active rule, since `find_signals()` re-reads `last_implemented.json` on every call. The previous version's file is kept on disk under `strategy/rules/` for signal traceability but is no longer imported or executed once replaced.
+Each rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When the Strategy Updater implements a new rule idea (§8.2 Step 4), it writes the new `rule_id` to `data/state/last_implemented.json` — a `fix` idea's version file is added alongside the previous version of the same rule, a `new_rule` idea's file goes in a new folder. Either way, the new version immediately becomes the sole active rule, since `find_signals()` re-reads `last_implemented.json` on every call. The previous version's file is kept on disk under `strategy/rules/` for signal traceability but is no longer imported or executed once replaced.
 
 ---
 
@@ -169,9 +169,12 @@ Every buy signal emitted by the strategy is written to a persistent ledger (`dat
   "emitted_at": "2026-06-15T10:32:00Z",
   "price_at_signal": 67420.50,
   "confidence": 0.72,
+  "indicators": { "rsi_14": 38.2, "sma_short": 67100.0 },
   "outcome": null
 }
 ```
+
+`indicators` is a snapshot of every current indicator's value against the pair's tier data *at the moment the signal was created* (`src/agent/loop.py`, right after `find_signals()` returns) — not recomputed later. A signal can take up to 20 days to resolve (§7), long after `data.warm`'s 24-hour window has rolled past the market state that actually produced it, so this is the only point where a causally-correct reading is available.
 
 ### 6.2 Outcome record
 
@@ -206,7 +209,7 @@ A signal can have `gain_24h_pct` set and `gain_pct` absent for a long time — t
 A background job runs every hour and resolves two independent outcome fields per pending buy signal:
 
 1. **24h read** (`gain_24h_pct`, `max_gain_24h_pct`): once a signal is 24-48h old, reconstructs prices from the warm tier over that window and writes both fields. This does not require a sell signal or any exit to have happened — it's a fixed snapshot.
-2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or by a 20-day timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since rules can be replaced roughly daily (§8.2 Step 9), most signals never reach this — the 24h read is what the rest of the system (§8.2 Step 6) actually relies on in practice.
+2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or by a 20-day timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since rules can be replaced roughly daily (§8.2 Step 8), most signals never reach this — the 24h read is what the rest of the system (§8.2 Step 5) actually relies on in practice.
 
 ---
 
@@ -221,7 +224,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | `data/state/signal_evaluation.json` | Aggregated per-rule signal statistics (win rate, avg gain, breakdown by pair and exit reason) |
 | `data/state/rule_evaluation.json` | Accumulated per-rule-version scoring, description, and enhanced metrics — one entry per rule ever evaluated; descriptions are cached here across runs |
 | `data/state/indicator_set.json` | The current set of LLM-defined indicators: name, description, and generated Python code for each |
-| `data/state/train_set.json` | Accumulating samples of (indicator values from 24h ago, target: last 24h change) across all pairs and cycles |
+| `data/state/train_set.json` | Accumulating samples of (indicator values captured at signal emission, resolved gain) — one per evaluated signal, across all cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
 | `data/state/next_cycle_plan.json` | Plan produced at end of each cycle: action (`continue`, `fix`, `new_rule`), and for `fix`/`new_rule`, a description of what to attempt |
 | `data/state/last_implemented.json` | `{rule_id, cycle_id}` of the most recently implemented rule (the current `ACTIVE_RULE`). Signal outcomes lag implementation by design (24h+ to resolve), so this is how later steps in the *following* cycle (evaluate, trace, plan, and a `fix` idea's `target_rule`) know which rule they're following up on |
@@ -236,40 +239,34 @@ All steps that involve reasoning use the LLM (see section 9). Steps run sequenti
 
 Skipped if `next_cycle_plan.json` has `action: continue` (previous cycle was successful — gain > 0.5%). Otherwise, the LLM reviews the current indicator set in light of the plan and may add, remove, or modify indicators. For each change, the LLM generates a Python function that computes the indicator from `PairData` (hot/warm/cold tiers). The updated set is persisted.
 
-#### Step 2 — Compute indicators
-*Inputs*: `data/state/indicator_set.json`, warm/cold tier data for pairs with a signal whose outcome is still unresolved  
-*Output*: in-memory indicator values per pair (consumed immediately by step 3)
-
-Executes each indicator function against the tier snapshot. Results are a flat dict of `{indicator_name: value}` per pair.
-
-#### Step 3 — Relation analysis
+#### Step 2 — Relation analysis
 *Inputs*: `data/state/train_set.json`, top-K episodic traces retrieved from `data/state/traces/` by semantic similarity to the current plan  
-*Output*: in-memory analysis (consumed by step 4)
+*Output*: in-memory analysis (consumed by step 3)
 
-The LLM receives: a sample of the accumulated train set (indicator values paired with their resolved outcome) and the most relevant past traces. It identifies which indicator patterns preceded positive and negative outcomes, and what those relations suggest about the next rule to try. Step 2's indicator values are not passed here directly — they only reach this step indirectly, once a signal resolves and a `{indicators, target_gain_pct}` sample is appended to `train_set.json`, since only samples with a known outcome are useful for correlation.
+The LLM receives: a sample of the accumulated train set (indicator values paired with their resolved outcome) and the most relevant past traces. It identifies which indicator patterns preceded positive and negative outcomes, and what those relations suggest about the next rule to try. Indicator values only ever reach this step through `train_set.json` — they're captured once, at signal emission time (§6.1), and carried through to whichever cycle later resolves that signal's outcome (§5), since only samples with a known outcome are useful for correlation.
 
 Traces are retrieved by embedding the current plan and performing cosine similarity search over trace hypothesis embeddings. Top-K (default 5) most similar traces are included.
 
-#### Step 4 — Generate rule idea
-*Inputs*: relation analysis (from step 3), `data/state/next_cycle_plan.json`  
+#### Step 3 — Generate rule idea
+*Inputs*: relation analysis (from step 2), `data/state/next_cycle_plan.json`  
 *Output*: selected idea (in-memory)
 
 The LLM generates exactly one idea per cycle, derived from the relation analysis. Two kinds:
 - **New rule** — an entirely new rule concept; if implemented, a new rule folder and `v1.py` are created. `target_rule` is null.
-- **Fix** — a targeted change to the currently active rule; if implemented, a new version file is added alongside the existing one. `target_rule` is always the current `ACTIVE_RULE`'s `rule_id`, set directly from `last_implemented.json` rather than asked of the LLM — since only one rule is ever active, there is never any ambiguity about what a "fix" targets.
+- **Fix** — a targeted change to the currently active rule; if implemented, a new version file is added alongside the existing one. `target_rule` is always the current active rule's `rule_id`, set directly from `last_implemented.json` rather than asked of the LLM — since only one rule is ever active, there is never any ambiguity about what a "fix" targets.
 
-#### Step 5 — Implement rule
+#### Step 4 — Implement rule
 *Inputs*: selected idea, source of the existing rule (for fix ideas)  
-*Output*: new rule version file under `strategy/rules/`, `strategy.py` (`ACTIVE_RULE` updated)
+*Output*: new rule version file under `strategy/rules/`, `data/state/last_implemented.json` (updated)
 
-Generates real, executable Python code from the idea produced in step 4. Exactly one rule version is added per pipeline run, and it becomes the sole `ACTIVE_RULE` in `strategy.py`, replacing whichever rule was previously active. The previous version's file is kept under `strategy/rules/` for signal traceability but is no longer imported or executed.
+Generates real, executable Python code from the idea produced in step 3. Exactly one rule version is added per pipeline run, and it becomes the sole active rule by being written to `last_implemented.json`, replacing whichever rule was previously active. The previous version's file is kept under `strategy/rules/` for signal traceability but is no longer imported or executed.
 
-#### Step 6 — Evaluate outcomes and score the active rule
+#### Step 5 — Evaluate outcomes and score the active rule
 *Inputs*: signal ledger (signals emitted more than 24h ago with `outcome = null`), prior `rule_evaluation.json`  
-*Output*: `rule_evaluation.json` (updated — one entry, for the current `ACTIVE_RULE`), `signal_evaluation.json`
+*Output*: `rule_evaluation.json` (updated — one entry, for the current active rule), `signal_evaluation.json`
 
 Fills in signal outcomes from tier data. Computes metrics for the currently active rule:
-- `signal_count` — signals with *any* outcome (`gain_24h_pct` or the final `gain_pct`, §6.2); `emitted_signal_count` — all signals emitted regardless of resolution. Since the 24h read resolves within about a day while the final outcome can take up to 20, `signal_count` tracks the 24h read in practice — §8.2 Step 9 relies on the gap between it and `emitted_signal_count` to tell "hasn't resolved yet" apart from "never fires."
+- `signal_count` — signals with *any* outcome (`gain_24h_pct` or the final `gain_pct`, §6.2); `emitted_signal_count` — all signals emitted regardless of resolution. Since the 24h read resolves within about a day while the final outcome can take up to 20, `signal_count` tracks the 24h read in practice — §8.2 Step 8 relies on the gap between it and `emitted_signal_count` to tell "hasn't resolved yet" apart from "never fires."
 - `evaluation_days`
 - `avg_gain_pct`, `recent_avg_gain_pct` (last 48h of data) — per signal, the final `gain_pct` if it has resolved, else `gain_24h_pct`
 - `min_gain_pct` (worst result), `p25_gain_pct`, `p75_gain_pct`
@@ -280,16 +277,16 @@ Fills in signal outcomes from tier data. Computes metrics for the currently acti
 - `avg_gain_by_volatility` — avg gain split into low/medium/high Bollinger Band Width buckets at signal time
 - `score` — composite score normalised to [0, 1]
 
-`rule_evaluation.json` accumulates one entry per rule ever evaluated: the active rule's entry is refreshed each cycle; every other rule_id's entry is carried over unchanged from whenever it was last active. There is no `status` field — whether to keep or replace the active rule is decided purely from `recent_avg_gain_pct + avg_transaction_gain` (§8.2 Step 9), not from a separate classification.
+`rule_evaluation.json` accumulates one entry per rule ever evaluated: the active rule's entry is refreshed each cycle; every other rule_id's entry is carried over unchanged from whenever it was last active. There is no `status` field — whether to keep or replace the active rule is decided purely from `recent_avg_gain_pct + avg_transaction_gain` (§8.2 Step 8), not from a separate classification.
 
-#### Step 7 — Update train set
-*Inputs*: indicator values computed in step 2, target values (last 24h change per pair)  
-*Output*: `data/state/train_set.json` (new samples appended)
+#### Step 6 — Update train set
+*Inputs*: signal ledger (signals newly resolved this cycle, with their `indicators` captured at emission time, §6.1)  
+*Output*: `data/state/train_set.json` (new samples appended), `data/state/indicator_set.json` (dead indicators pruned)
 
-Appends one record per pair: `{cycle_id, pair, indicators: {...}, target_gain_pct}`. The train set accumulates indefinitely across cycles.
+For each signal that now has a resolved outcome and isn't already in the train set, appends `{signal_id, cycle_id, pair, rule_id, indicators, target_gain_pct}` using the `indicators` already stored on the signal record — nothing is recomputed here. The train set accumulates indefinitely across cycles. Any indicator that comes back null across every sample added this cycle is pruned from `indicator_set.json`, since that's the only point a fresh batch of real indicator readings is available to check.
 
-#### Step 8 — Write episodic trace
-*Inputs*: selected idea (from step 4), `rule_evaluation.json`, relation analysis diagnosis  
+#### Step 7 — Write episodic trace
+*Inputs*: selected idea (from step 3), `rule_evaluation.json`, relation analysis diagnosis  
 *Output*: new file in `data/state/traces/<cycle_id>.json`
 
 Writes an immutable trace record:
@@ -308,8 +305,8 @@ Writes an immutable trace record:
 
 Traces are never edited. The `embedding` field is computed from the hypothesis text and stored alongside the trace for semantic retrieval in future cycles.
 
-#### Step 9 — Plan next cycle
-*Inputs*: `rule_evaluation.json` (score for the currently active rule), episodic trace (from step 8)  
+#### Step 8 — Plan next cycle
+*Inputs*: `rule_evaluation.json` (score for the currently active rule), episodic trace (from step 7)  
 *Output*: `data/state/next_cycle_plan.json`
 
 Decision logic, evaluated fresh every cycle against whichever rule is currently active:
@@ -331,7 +328,7 @@ If a cycle reads `action: continue` from the previous cycle, it re-runs this che
 [idea generated] → [implemented] → [continue | replaced]
 ```
 
-Ideas are generated in step 4 and implemented immediately in step 5 — they are not queued or persisted separately; there is no backlog. Once implemented, a rule stays active for as long as step 9 keeps deciding `continue`. There is no separate status classification or grace-period counter: replacement is driven purely by `avg_gain_pct` against `cycle_success_threshold`, re-checked every cycle. A replaced rule's file remains under `strategy/rules/` for signal traceability, but is no longer imported or executed once `ACTIVE_RULE` (§5.3) points elsewhere.
+Ideas are generated in step 3 and implemented immediately in step 4 — they are not queued or persisted separately; there is no backlog. Once implemented, a rule stays active for as long as step 8 keeps deciding `continue`. There is no separate status classification or grace-period counter: replacement is decided fresh every cycle from `recent_avg_gain_pct + avg_transaction_gain` or `avg_transaction_gain` alone (§8.2 Step 8). A replaced rule's file remains under `strategy/rules/` for signal traceability, but is no longer imported or executed once `last_implemented.json` (§5.3) points elsewhere.
 
 ---
 

@@ -83,6 +83,7 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             emitted_at       TEXT NOT NULL,
             price_at_signal  REAL NOT NULL,
             confidence       REAL,
+            indicators_json  TEXT,
             evaluated_at     TEXT,
             exit_price       REAL,
             exit_reason      TEXT,
@@ -91,6 +92,10 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             max_gain_24h_pct REAL
         )
     """)
+    con.execute(
+        "ALTER TABLE signals ADD COLUMN indicators_json TEXT"
+        if not _column_exists(con, "signals", "indicators_json") else "SELECT 1"
+    )
     con.execute("CREATE INDEX IF NOT EXISTS idx_signals_pair ON signals(pair, direction)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_signals_rule ON signals(rule_id)")
     con.commit()

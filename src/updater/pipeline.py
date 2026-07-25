@@ -23,7 +23,6 @@ from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.steps import (
     step1_indicator_set,
-    step2_compute_indicators,
     step3_analyze_results,
     step4_analyze_rules,
     step5_train_set,
@@ -35,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 _STEPS: list[tuple[str, Callable]] = [
     ("1 indicator_set", step1_indicator_set.run),
-    ("2 compute_indicators", step2_compute_indicators.run),
     ("3 analyze_results", step3_analyze_results.run),
     ("4 analyze_rules", step4_analyze_rules.run),
     ("5 train_set", step5_train_set.run),
@@ -49,7 +47,6 @@ _STATE_FILES = [
     paths.RULE_DESCRIPTIONS,
     paths.RULE_EVALUATION,
     paths.INDICATOR_SET,
-    paths.INDICATOR_VALUES,
     paths.TRAIN_SET,
     paths.LAST_IMPLEMENTED,
 ]
