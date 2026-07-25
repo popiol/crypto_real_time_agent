@@ -103,9 +103,9 @@ def _resolve_target_rule(
 
     Uses the cycle_id recorded in last_implemented.json — the cycle that
     actually implemented this rule, which is always written alongside
-    rule_id (see _write_last_implemented). Only the fallback paths below,
-    where there's no rule-specific cycle to report, use the current
-    pipeline cycle_id instead.
+    rule_id (see plan_next_cycle.write_last_implemented). Only the fallback
+    paths below, where there's no rule-specific cycle to report, use the
+    current pipeline cycle_id instead.
     """
     last_path = paths.last_implemented(state_dir)
     if last_path.exists():

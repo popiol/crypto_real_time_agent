@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PairMetrics(BaseModel):
@@ -52,6 +52,21 @@ class IndicatorSet(BaseModel):
 class NextCyclePlan(BaseModel):
     action: Literal["continue", "fix", "new_rule"]
     description: str | None = None
+
+
+class RelationAnalysis(BaseModel):
+    positive_patterns: list[str] = Field(
+        description="Indicator combinations or conditions that correlated with positive outcomes"
+    )
+    negative_patterns: list[str] = Field(
+        description="Indicator combinations or conditions that correlated with negative outcomes"
+    )
+    key_indicators: list[str] = Field(
+        description="Most informative indicators for predicting outcome sign"
+    )
+    suggested_direction: str = Field(
+        description="Proposed direction for the next rule idea, grounded in the observed patterns"
+    )
 
 
 class TrainSample(BaseModel):
