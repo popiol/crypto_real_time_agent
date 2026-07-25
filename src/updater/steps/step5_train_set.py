@@ -16,7 +16,7 @@ from pathlib import Path
 from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
-from src.updater.models import TrainSample, TrainSet
+from src.updater.models import EpisodicTrace, TrainSample, TrainSet
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +47,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     existing_signal_ids = {s.signal_id for s in train_set.samples}
 
     # Find evaluated signals with indicator values
-    cycle_id = _current_cycle_id(state_dir)
+    rule_cycle_map = _rule_cycle_map(state_dir)
     all_signals = storage.read_signals(config)
     new_samples: list[TrainSample] = []
 
@@ -68,11 +68,12 @@ def run(config: AppConfig, state_dir: Path) -> None:
         if gain_pct is None:
             continue
 
+        rule_id = signal.get("rule_id", "")
         new_samples.append(TrainSample(
             signal_id=signal_id,
-            cycle_id=cycle_id,
+            cycle_id=rule_cycle_map.get(rule_id, "unknown"),
             pair=pair,
-            rule_id=signal.get("rule_id", ""),
+            rule_id=rule_id,
             indicators=indicator_values[pair],
             target_gain_pct=gain_pct,
         ))
@@ -99,13 +100,22 @@ def _load_train_set(path: Path) -> TrainSet:
         return TrainSet()
 
 
-def _current_cycle_id(state_dir: Path) -> str:
-    """Return the cycle_id from last_implemented.json, or a fallback."""
-    last_path = paths.last_implemented(state_dir)
-    if last_path.exists():
+def _rule_cycle_map(state_dir: Path) -> dict[str, str]:
+    """Return {rule_id: cycle_id} by scanning episodic traces.
+
+    Each trace records the rule_id implemented in that cycle, so this lets
+    every train sample carry the cycle_id of the cycle that actually
+    produced its signal's rule — rather than whatever cycle happens to be
+    the most recent one at the time this step runs.
+    """
+    mapping: dict[str, str] = {}
+    traces_dir = paths.traces_dir(state_dir)
+    if not traces_dir.exists():
+        return mapping
+    for path in traces_dir.glob("*.json"):
         try:
-            data = json.loads(last_path.read_text(encoding="utf-8"))
-            return data.get("cycle_id", "unknown")
+            trace = EpisodicTrace.model_validate_json(path.read_text(encoding="utf-8"))
+            mapping[trace.rule_id] = trace.cycle_id
         except Exception:
-            pass
-    return "unknown"
+            logger.warning("Could not parse trace %s", path, exc_info=True)
+    return mapping
