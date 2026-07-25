@@ -208,6 +208,28 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     current_plan = _load_current_plan(state_dir)
     last_rule_id, _last_cycle_id = _load_last_implemented(state_dir)
 
+    if current_plan.action == "continue":
+        # The active rule is performing — exactly one rule can ever be active
+        # (see strategy.py), so generating and implementing a new idea here
+        # would replace a winning rule with an untested one. Just re-check
+        # whether it's still performing, and leave it running otherwise.
+        logger.info(
+            "Cycle plan: action=continue — rule %s is performing; skipping idea generation",
+            last_rule_id,
+        )
+        _write_next_cycle_plan(
+            state_dir,
+            last_rule_id,
+            _RelationAnalysis(
+                positive_patterns=[],
+                negative_patterns=[],
+                key_indicators=[],
+                suggested_direction="",
+            ),
+            config,
+        )
+        return
+
     # Retrieve relevant past traces and run relation analysis
     traces = _retrieve_top_k_traces(state_dir, current_plan.description, config)
     logger.info(
