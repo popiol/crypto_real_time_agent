@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-# --- Data Models ---
+# --- Data Models (provided in the problem description) ---
 class Tick(BaseModel):
     """A single poll snapshot for one currency pair."""
 
@@ -90,9 +90,13 @@ MarketData = dict[str, PairData]
 RSI_PERIOD = 14
 BB_PERIOD = 20
 BB_K = 2.0 # Standard deviation multiplier for Bollinger Bands
-SMA_PERIOD = 20 # Period for Simple Moving Average, used within BB calculation
 
-RULE_ID = "MR_Relaxed_RSI_BB"
+# Rule-specific constants
+RULE_ID = "RSI_BB_MR_V2_RelaxedRSI"
+RSI_BUY_THRESHOLD = 35
+RSI_SELL_THRESHOLD = 65
+BB_PERCENT_B_BUY_THRESHOLD = 0.5
+BB_PERCENT_B_SELL_THRESHOLD = 0.5
 
 
 def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
@@ -182,12 +186,12 @@ def _calculate_bollinger_bands_percent_b(prices: np.ndarray, period: int, k: flo
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     """
-    Implements the 'Relaxed Mean-Reversion Entry with OR Conditions' trading rule.
+    Implements the 'Mean Reversion with Relaxed RSI and Bollinger Bands %B' trading rule.
 
-    This rule generates a buy signal if either the Relative Strength Index (RSI)
-    falls below 20 OR the Bollinger Bands %B falls below 0.
-    A sell signal is generated if either the RSI rises above 80 OR the Bollinger Bands %B
-    risess above 1. This aims to capture extreme oversold or overbought conditions more frequently.
+    This rule generates a buy signal if the Relative Strength Index (RSI) is below 35
+    AND the Bollinger Bands %B is below 0.5.
+    A sell signal is generated if the RSI is above 65 AND the Bollinger Bands %B
+    is above 0.5. This aims to capture mean-reversion opportunities with relaxed RSI thresholds.
     """
     signals: list[BuySignal | SellSignal] = []
 
@@ -239,16 +243,16 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             # No current price available from hot or warm data. Cannot generate a relevant signal.
             continue
         
-        # Apply the rule's conditions for long entry: (RSI < 20) OR (BB%B < 0)
-        if (last_rsi < 20) or (last_bb_percent_b < 0):
+        # Apply the rule's conditions for long entry: RSI < 35 AND BB%B < 0.5
+        if (last_rsi < RSI_BUY_THRESHOLD) and (last_bb_percent_b < BB_PERCENT_B_BUY_THRESHOLD):
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
                 price=current_price,
                 rule_id=RULE_ID
             ))
-        # Apply the rule's conditions for short entry: (RSI > 80) OR (BB%B > 1)
-        elif (last_rsi > 80) or (last_bb_percent_b > 1):
+        # Apply the rule's conditions for short entry: RSI > 65 AND BB%B > 0.5
+        elif (last_rsi > RSI_SELL_THRESHOLD) and (last_bb_percent_b > BB_PERCENT_B_SELL_THRESHOLD):
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
