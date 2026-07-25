@@ -86,19 +86,19 @@ MarketData = dict[str, PairData]
 # --- End of Data Models ---
 
 
-# Constants for RSI
+# Constants for indicators
 RSI_PERIOD = 14
+BB_PERIOD = 20
+BB_K = 2.0 # Standard deviation multiplier for Bollinger Bands
+SMA_PERIOD = 20 # Period for Simple Moving Average used in Price Deviation calculation
 
-# Relaxed thresholds for 'RSI_Relaxed_Thresholds_V2'
-RSI_LONG_THRESHOLD = 40
-RSI_SHORT_THRESHOLD = 60
-
-RULE_ID = "RSI_Relaxed_Thresholds_V2"
+RULE_ID = "BB_PercentB_Adjust_001"
 
 
 def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
     """
     Calculates Relative Strength Index (RSI) for a given numpy array of prices.
+    Returns an array of RSI values, with the latest RSI at the end.
     """
     if len(prices) < period + 1: # Need at least period + 1 prices to get period differences
         return np.array([])
@@ -110,7 +110,6 @@ def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
     rsi_values = np.full(len(prices) - period, np.nan, dtype=float)
 
     # Initial average gain and loss for the first `period` differences
-    # Only consider the first `period` differences for the initial average calculation
     initial_gains = gains[:period]
     initial_losses = losses[:period]
 
@@ -141,20 +140,74 @@ def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
 
     return rsi_values
 
+
+def _calculate_sma(prices: np.ndarray, period: int) -> np.ndarray:
+    """
+    Calculates Simple Moving Average (SMA) for a given numpy array of prices.
+    The result array will have length len(prices) - period + 1.
+    """
+    if len(prices) < period:
+        return np.array([])
+    # Using np.convolve for efficiency
+    return np.convolve(prices, np.ones(period), 'valid') / period
+
+
+def _calculate_bollinger_bands_percent_b(prices: np.ndarray, period: int, k: float) -> np.ndarray:
+    """
+    Calculates Bollinger Bands %B for a given numpy array of prices.
+    %B = (Current Close - Lower Band) / (Upper Band - Lower Band)
+    """
+    if len(prices) < period:
+        return np.array([])
+
+    sma_series = _calculate_sma(prices, period)
+    
+    # Calculate rolling standard deviation over the same `period` window as SMA
+    std_dev_series = np.array([np.std(prices[i:i+period]) for i in range(len(prices) - period + 1)])
+
+    upper_band = sma_series + (std_dev_series * k)
+    lower_band = sma_series - (std_dev_series * k)
+
+    # The 'current closes' for %B calculation are the prices that correspond to each SMA/band point.
+    # These are the prices from `period-1` index to the end of the `prices` array.
+    current_closes_for_bands = prices[period - 1:]
+
+    # Avoid division by zero if upper_band == lower_band (e.g., flat prices)
+    denominator = upper_band - lower_band
+    # If denominator is zero, %B is typically undefined or taken as 0.5 (mid-band).
+    percent_b = np.where(denominator != 0, (current_closes_for_bands - lower_band) / denominator, 0.5)
+
+    return percent_b
+
+
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     """
-    Implements the Relaxed RSI Mean-Reversion Thresholds ('RSI_Relaxed_Thresholds_V2').
+    Implements the 'BB_PercentB_Adjust_001' trading rule.
 
-    A buy signal is generated when the 14-period RSI falls below 40.
-    A sell signal is generated when the 14-period RSI rises above 60.
+    This rule modifies a Bollinger Bands %B mean-reversion strategy by adjusting
+    entry thresholds for extreme overbought/oversold conditions, reinforced by
+    RSI and Price Deviation from SMA.
+
+    A buy signal is generated when:
+    - Bollinger Bands %B is below 0.2
+    - RSI is below 35
+    - Price Deviation from SMA is negative (price is below SMA)
+
+    A sell signal is generated when:
+    - Bollinger Bands %B is above 0.8
+    - RSI is above 75
+    - Price Deviation from SMA is positive (price is above SMA)
     """
     signals: list[BuySignal | SellSignal] = []
 
     for pair, pair_data in data.items():
         warm_data = pair_data.warm
 
-        # We need enough data for RSI (14).
-        required_data_points = RSI_PERIOD + 1
+        # Determine the maximum number of candles required for all indicators
+        # RSI needs PERIOD + 1. BB/SMA needs PERIOD.
+        # So, we need max(RSI_PERIOD + 1, BB_PERIOD, SMA_PERIOD) candles.
+        required_data_points = max(RSI_PERIOD + 1, BB_PERIOD, SMA_PERIOD)
+
         if len(warm_data) < required_data_points:
             continue
 
@@ -162,15 +215,27 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         # These are assumed to be chronologically ordered, with the latest price at the end.
         prices = np.array([candle.close for candle in warm_data], dtype=float)
 
-        # Calculate RSI
+        # Calculate indicators
         rsi_series = _calculate_rsi(prices, RSI_PERIOD)
+        bb_percent_b_series = _calculate_bollinger_bands_percent_b(prices, BB_PERIOD, BB_K)
+        sma_series = _calculate_sma(prices, SMA_PERIOD) # SMA for price deviation
 
-        # Ensure we have at least one valid value for RSI
-        if len(rsi_series) == 0:
+        # Ensure we have at least one valid value for each indicator
+        if len(rsi_series) == 0 or len(bb_percent_b_series) == 0 or len(sma_series) == 0:
             continue
 
-        # The last value of the series corresponds to the latest available price.
+        # Get the latest values for each indicator
         last_rsi = rsi_series[-1]
+        last_bb_percent_b = bb_percent_b_series[-1]
+        last_sma = sma_series[-1] # SMA value corresponding to the latest price
+        last_price = prices[-1] # The latest close price
+
+        # Calculate Price Deviation from SMA for the last candle
+        price_deviation_sma = last_price - last_sma
+
+        # Check for potential NaN/Inf in indicator values before using them
+        if not (np.isfinite(last_rsi) and np.isfinite(last_bb_percent_b) and np.isfinite(price_deviation_sma)):
+            continue
 
         # Determine the most recent price and timestamp for the signal.
         # Prioritize 'hot' (tick) data for the most up-to-date information,
@@ -189,19 +254,20 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             # No current price available from hot or warm data. Cannot generate a relevant signal.
             continue
 
-        # Check for potential NaN/Inf in indicator values (e.g., from division by zero or flat price series)
-        if not np.isfinite(last_rsi):
-            continue
-
-        # Determine trading signal based on the relaxed RSI thresholds
-        if last_rsi < RSI_LONG_THRESHOLD:
+        # Apply the rule's conditions for long entry
+        if (last_bb_percent_b < 0.2 and
+            last_rsi < 35 and
+            price_deviation_sma < 0):
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
                 price=current_price,
                 rule_id=RULE_ID
             ))
-        elif last_rsi > RSI_SHORT_THRESHOLD:
+        # Apply the rule's conditions for short entry
+        elif (last_bb_percent_b > 0.8 and
+              last_rsi > 75 and
+              price_deviation_sma > 0):
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
