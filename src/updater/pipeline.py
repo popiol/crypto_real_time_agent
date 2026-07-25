@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.steps import (
     step1_indicator_set,
     step2_compute_indicators,
@@ -43,13 +44,13 @@ _STEPS: list[tuple[str, Callable]] = [
 
 
 _STATE_FILES = [
-    "signal_evaluation.json",
-    "rule_descriptions.json",
-    "rule_evaluation.json",
-    "indicator_set.json",
-    "indicator_values.json",
-    "train_set.json",
-    "last_implemented.json",
+    paths.SIGNAL_EVALUATION,
+    paths.RULE_DESCRIPTIONS,
+    paths.RULE_EVALUATION,
+    paths.INDICATOR_SET,
+    paths.INDICATOR_VALUES,
+    paths.TRAIN_SET,
+    paths.LAST_IMPLEMENTED,
 ]
 
 
@@ -72,7 +73,7 @@ def run(config: AppConfig) -> None:
 
 def _archive_state(state_dir: Path) -> None:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-    history_dir = state_dir / "history" / ts
+    history_dir = paths.history_dir(state_dir, ts)
     archived = 0
     for name in _STATE_FILES:
         src = state_dir / name

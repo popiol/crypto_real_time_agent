@@ -40,7 +40,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
             pass
 
     existing_plan_text = "No existing plan."
-    plan_path = state_dir / "long_term_plan.json"
+    plan_path = paths.long_term_plan(state_dir)
     if plan_path.exists():
         existing_plan_text = plan_path.read_text(encoding="utf-8")
 
