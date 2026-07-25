@@ -128,12 +128,27 @@ def _diagnose_failure(
     )
 
 
+def write_continue_plan(state_dir: Path, rule_id: str) -> NextCyclePlan:
+    """Write a plain 'continue' plan — used when a new rule just took over and
+    hasn't had any chance yet to prove itself, so there's nothing to evaluate.
+    """
+    plan = NextCyclePlan(action="continue", description=None)
+    paths.next_cycle_plan(state_dir).write_text(
+        plan.model_dump_json(indent=2), encoding="utf-8"
+    )
+    logger.info(
+        "next_cycle_plan.json written: action=continue (rule %s just implemented)",
+        rule_id,
+    )
+    return plan
+
+
 def write_next_cycle_plan(
     state_dir: Path,
     last_rule_id: str | None,
     analysis: RelationAnalysis,
     config: AppConfig,
-) -> None:
+) -> NextCyclePlan:
     plan_path = paths.next_cycle_plan(state_dir)
 
     if last_rule_id is None:
@@ -141,7 +156,7 @@ def write_next_cycle_plan(
         plan = NextCyclePlan(action="continue", description=None)
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         logger.info("next_cycle_plan.json written: action=continue (first cycle)")
-        return
+        return plan
 
     rule_score = get_rule_score(state_dir, last_rule_id)
     if rule_score is None:
@@ -152,7 +167,7 @@ def write_next_cycle_plan(
             "next_cycle_plan.json written: action=continue (rule %s not yet evaluated)",
             last_rule_id,
         )
-        return
+        return plan
 
     if rule_score.avg_gain_pct > config.cycle_success_threshold:
         plan = NextCyclePlan(action="continue", description=None)
@@ -162,7 +177,7 @@ def write_next_cycle_plan(
             last_rule_id,
             rule_score.avg_gain_pct,
         )
-        return
+        return plan
 
     # Failure: ask LLM to diagnose fix vs new_rule
     try:
@@ -183,3 +198,4 @@ def write_next_cycle_plan(
         rule_score.avg_gain_pct,
         plan.description,
     )
+    return plan

@@ -44,18 +44,26 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     last_rule_id, _last_cycle_id = plan_next_cycle_step.load_last_implemented(state_dir)
 
     if current_plan.action == "continue":
-        # The active rule is performing — exactly one rule can ever be active
-        # (see strategy.py), so generating and implementing a new idea here
-        # would replace a winning rule with an untested one. Just re-check
-        # whether it's still performing, and leave it running otherwise.
-        logger.info(
-            "Cycle plan: action=continue — rule %s is performing; skipping idea generation",
-            last_rule_id,
-        )
-        plan_next_cycle_step.write_next_cycle_plan(
+        # The plan on disk was decided last cycle — re-check fresh rather than
+        # trust it blindly, since the active rule's score may have moved on.
+        current_plan = plan_next_cycle_step.write_next_cycle_plan(
             state_dir, last_rule_id, _EMPTY_ANALYSIS, config
         )
-        return
+        if current_plan.action == "continue":
+            # Exactly one rule can ever be active (see strategy.py), so
+            # generating and implementing a new idea here would replace a
+            # winning rule with an untested one — leave it running.
+            logger.info(
+                "Cycle plan: action=continue — rule %s is performing; skipping idea generation",
+                last_rule_id,
+            )
+            return
+        logger.info(
+            "Rule %s no longer performing (re-checked action=%s); generating a new "
+            "idea this cycle instead of waiting for the next one",
+            last_rule_id,
+            current_plan.action,
+        )
 
     # Retrieve relevant past traces and run relation analysis
     traces = relation_analysis_step.retrieve_top_k_traces(
@@ -120,6 +128,13 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     # Write last_implemented.json for the new rule
     if implemented_rule_id:
         plan_next_cycle_step.write_last_implemented(state_dir, implemented_rule_id, cycle_id)
-
-    # Write next_cycle_plan.json based on previous rule's performance
-    plan_next_cycle_step.write_next_cycle_plan(state_dir, last_rule_id, analysis, config)
+        # The new rule just took over and hasn't had a chance to run yet, so
+        # there's nothing to evaluate — do NOT re-diagnose last_rule_id here.
+        # That plan would only be read next cycle, by which point
+        # last_rule_id will already be this new rule, and a stale "fix"
+        # verdict about its predecessor would get misapplied to it before it
+        # ever got a chance to prove itself.
+        plan_next_cycle_step.write_continue_plan(state_dir, implemented_rule_id)
+    else:
+        # Implementation failed; keep evaluating the still-active rule.
+        plan_next_cycle_step.write_next_cycle_plan(state_dir, last_rule_id, analysis, config)
