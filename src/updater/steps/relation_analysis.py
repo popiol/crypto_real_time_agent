@@ -1,17 +1,16 @@
 """Relation analysis — design.md §8.2 Step 3.
 
 Retrieves the top-K episodic traces most semantically similar to the current
-cycle plan's description, then makes one LLM call that looks at this cycle's
-computed indicator values, a sample of the accumulated train set, and those
-retrieved traces to identify which indicator patterns preceded positive vs.
-negative outcomes.
+cycle plan's description, then makes one LLM call that looks at a sample of
+the accumulated train set (indicator values paired with their resolved
+outcome) and those retrieved traces to identify which indicator patterns
+preceded positive vs. negative outcomes.
 
 Not a pipeline.py stage in its own right: its output (RelationAnalysis) is
 only ever consumed in-memory by generate_idea.py in the same run, so this
 module is called directly from step7_implement_idea.py's orchestrator.
 
 Reads:
-  data/state/indicator_values.json  — computed indicator values (from step2_compute_indicators)
   data/state/train_set.json         — accumulated train samples
   data/state/traces/                — episodic trace files
 """
@@ -33,9 +32,9 @@ _MAX_TRAIN_SAMPLES = 100  # cap sent to LLM
 
 _RELATION_ANALYSIS_SYSTEM = (
     "You are a quantitative trading analyst. "
-    "You will receive indicator values computed for recent signals, "
-    "a sample of the training dataset linking indicator values to price outcomes, "
-    "and relevant past episodic traces describing previously tested hypotheses. "
+    "You will receive a sample of the training dataset linking indicator values to "
+    "price outcomes, and relevant past episodic traces describing previously tested "
+    "hypotheses. "
     "Identify which indicator combinations or conditions preceded positive outcomes "
     "and which preceded losses. Be specific about directions and thresholds. "
     "Your analysis will directly inform the generation of a new trading rule."
@@ -129,17 +128,6 @@ def retrieve_top_k_traces(
 # ── Relation analysis ─────────────────────────────────────────────────────────
 
 
-def _load_indicator_values(state_dir: Path) -> dict[str, dict[str, float | None]]:
-    path = paths.indicator_values(state_dir)
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        logger.warning("Could not read indicator_values.json", exc_info=True)
-        return {}
-
-
 def _load_recent_train_samples(state_dir: Path, n: int) -> list[dict]:
     path = paths.train_set(state_dir)
     if not path.exists():
@@ -151,19 +139,6 @@ def _load_recent_train_samples(state_dir: Path, n: int) -> list[dict]:
     except Exception:
         logger.warning("Could not read train_set.json", exc_info=True)
         return []
-
-
-def _format_indicator_values(values: dict[str, dict[str, float | None]]) -> str:
-    if not values:
-        return "(no indicator values available)"
-    lines = []
-    for pair, indicators in values.items():
-        row = ", ".join(
-            f"{k}={v:.4f}" if isinstance(v, float) else f"{k}=null"
-            for k, v in indicators.items()
-        )
-        lines.append(f"  {pair}: {row}")
-    return "\n".join(lines)
 
 
 def _format_traces(traces: list[EpisodicTrace]) -> str:
@@ -184,10 +159,8 @@ def _format_traces(traces: list[EpisodicTrace]) -> str:
 def run_relation_analysis(
     state_dir: Path, traces: list[EpisodicTrace], config: AppConfig
 ) -> RelationAnalysis:
-    indicator_values = _load_indicator_values(state_dir)
     train_samples = _load_recent_train_samples(state_dir, _MAX_TRAIN_SAMPLES)
 
-    indicators_section = _format_indicator_values(indicator_values)
     traces_section = _format_traces(traces)
 
     if train_samples:
@@ -196,7 +169,6 @@ def run_relation_analysis(
         train_section = "(no training samples available yet)"
 
     user = (
-        f"Current indicator values by pair:\n{indicators_section}\n\n"
         f"Recent training samples (last {len(train_samples)}):\n{train_section}\n\n"
         f"Top-{config.trace_top_k} relevant past traces:\n{traces_section}"
     )

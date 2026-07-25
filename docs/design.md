@@ -243,10 +243,10 @@ Skipped if `next_cycle_plan.json` has `action: continue` (previous cycle was suc
 Executes each indicator function against the tier snapshot. Results are a flat dict of `{indicator_name: value}` per pair.
 
 #### Step 3 — Relation analysis
-*Inputs*: indicator values (from step 2), `data/state/train_set.json`, top-K episodic traces retrieved from `data/state/traces/` by semantic similarity to the current plan  
+*Inputs*: `data/state/train_set.json`, top-K episodic traces retrieved from `data/state/traces/` by semantic similarity to the current plan  
 *Output*: in-memory analysis (consumed by step 4)
 
-The LLM receives: the computed indicators for all pairs, the target values (last 24h change per pair), the accumulated train set, and the most relevant past traces. It identifies which indicator patterns preceded positive and negative outcomes, and what those relations suggest about the next rule to try.
+The LLM receives: a sample of the accumulated train set (indicator values paired with their resolved outcome) and the most relevant past traces. It identifies which indicator patterns preceded positive and negative outcomes, and what those relations suggest about the next rule to try. Step 2's indicator values are not passed here directly — they only reach this step indirectly, once a signal resolves and a `{indicators, target_gain_pct}` sample is appended to `train_set.json`, since only samples with a known outcome are useful for correlation.
 
 Traces are retrieved by embedding the current plan and performing cosine similarity search over trace hypothesis embeddings. Top-K (default 5) most similar traces are included.
 
