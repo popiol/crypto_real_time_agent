@@ -1,0 +1,110 @@
+"""Train set step — append one sample per evaluated signal to train_set.json.
+
+For each signal that now has an evaluated outcome AND has indicator values
+available (from indicator_values.json), appends a TrainSample. Uses signal_id
+for deduplication so re-runs don't produce duplicate entries.
+
+Writes / updates: data/state/train_set.json
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+from src.agent import storage
+from src.agent.models import AppConfig
+from src.updater.models import TrainSample, TrainSet
+
+logger = logging.getLogger(__name__)
+
+
+def run(config: AppConfig, state_dir: Path) -> None:
+    values_path = state_dir / "indicator_values.json"
+    train_path = state_dir / "train_set.json"
+
+    # Load indicator values (pair → {name → value})
+    if not values_path.exists():
+        logger.info("indicator_values.json not found; skipping train set update")
+        return
+
+    try:
+        indicator_values: dict[str, dict[str, float | None]] = json.loads(
+            values_path.read_text(encoding="utf-8")
+        )
+    except Exception:
+        logger.warning("Could not read indicator_values.json", exc_info=True)
+        return
+
+    if not indicator_values:
+        logger.info("No indicator values; skipping train set update")
+        return
+
+    # Load existing train set for deduplication
+    train_set = _load_train_set(train_path)
+    existing_signal_ids = {s.signal_id for s in train_set.samples}
+
+    # Find evaluated signals with indicator values
+    cycle_id = _current_cycle_id(state_dir)
+    all_signals = storage.read_signals(config)
+    new_samples: list[TrainSample] = []
+
+    for signal in all_signals:
+        outcome = signal.get("outcome")
+        if outcome is None:
+            continue  # not yet evaluated
+
+        signal_id = signal.get("signal_id", "")
+        if signal_id in existing_signal_ids:
+            continue  # already in train set
+
+        pair = signal.get("pair", "")
+        if pair not in indicator_values:
+            continue  # no indicator values for this pair
+
+        gain_pct = outcome.get("gain_24h_pct") or outcome.get("gain_pct")
+        if gain_pct is None:
+            continue
+
+        new_samples.append(TrainSample(
+            signal_id=signal_id,
+            cycle_id=cycle_id,
+            pair=pair,
+            rule_id=signal.get("rule_id", ""),
+            indicators=indicator_values[pair],
+            target_gain_pct=gain_pct,
+        ))
+
+    if not new_samples:
+        logger.info("No new signals to add to train set")
+        return
+
+    train_set.samples.extend(new_samples)
+    train_path.write_text(train_set.model_dump_json(indent=2), encoding="utf-8")
+    logger.info("train_set.json updated: +%d sample(s) (%d total)", len(new_samples), len(train_set.samples))
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _load_train_set(path: Path) -> TrainSet:
+    if not path.exists():
+        return TrainSet()
+    try:
+        return TrainSet.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Could not parse train_set.json; starting fresh", exc_info=True)
+        return TrainSet()
+
+
+def _current_cycle_id(state_dir: Path) -> str:
+    """Return the cycle_id from last_implemented.json, or a fallback."""
+    last_path = state_dir / "last_implemented.json"
+    if last_path.exists():
+        try:
+            data = json.loads(last_path.read_text(encoding="utf-8"))
+            return data.get("cycle_id", "unknown")
+        except Exception:
+            pass
+    return "unknown"

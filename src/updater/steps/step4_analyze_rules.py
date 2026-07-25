@@ -23,7 +23,7 @@ import sys
 from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater.llm import llm_structured
-from src.updater.models import RuleEvaluation, RuleScore
+from src.updater.models import GainByVolatility, RuleEvaluation, RuleScore
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +151,133 @@ def _load_transaction_gains(config: AppConfig) -> dict[str, float]:
         return {}
 
 
+def _weekly_counts(signals: list[dict]) -> list[int]:
+    """Return signal counts per calendar week (ISO), oldest week first."""
+    from collections import defaultdict
+    from datetime import datetime, timezone
+
+    def _parse(ts) -> datetime:
+        dt = datetime.fromisoformat(str(ts))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+    by_week: dict[tuple[int, int], int] = defaultdict(int)
+    for s in signals:
+        ts = s.get("emitted_at")
+        if not ts:
+            continue
+        iso = _parse(ts).isocalendar()
+        by_week[(iso.year, iso.week)] += 1
+
+    if not by_week:
+        return []
+    sorted_weeks = sorted(by_week)
+    return [by_week[w] for w in sorted_weeks]
+
+
+def _signal_trend(weekly: list[int]) -> str:
+    if len(weekly) < 3:
+        return "stable"
+    first3 = sum(weekly[:3]) / 3
+    last3 = sum(weekly[-3:]) / 3
+    if last3 > first3:
+        return "increasing"
+    if last3 < first3:
+        return "decreasing"
+    return "stable"
+
+
+def _bbw(closes: list[float], period: int = 20) -> float | None:
+    """Bollinger Band Width = 4 * std(closes[-period:]) / sma(closes[-period:])."""
+    if len(closes) < period:
+        return None
+    window = closes[-period:]
+    sma = sum(window) / period
+    if sma == 0:
+        return None
+    variance = sum((c - sma) ** 2 for c in window) / period
+    std = variance ** 0.5
+    return 4 * std / sma
+
+
+def _gain_by_volatility(signals: list[dict], config: AppConfig) -> GainByVolatility:
+    """Bucket signal gains by Bollinger Band Width at signal time."""
+    from datetime import datetime, timedelta, timezone
+
+    def _parse(ts) -> datetime:
+        dt = datetime.fromisoformat(str(ts))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+    # Gather signals with timestamps; fetch warm candles per pair
+    bbw_gains: list[tuple[float, float]] = []  # (bbw, gain_pct)
+    candle_cache: dict[str, list] = {}
+
+    for s in signals:
+        pair = s.get("pair")
+        ts = s.get("emitted_at")
+        gain = s.get("outcome", {}).get("gain_pct")
+        if not pair or not ts or gain is None:
+            continue
+        signal_time = _parse(ts)
+        since = signal_time - timedelta(hours=22)
+        if pair not in candle_cache:
+            candle_cache[pair] = storage.read_warm_candles_range(pair, since, config)
+        candles = [c for c in candle_cache[pair] if c.hour <= signal_time]
+        closes = [c.close for c in candles]
+        bbw = _bbw(closes)
+        if bbw is not None:
+            bbw_gains.append((bbw, gain))
+
+    if not bbw_gains:
+        return GainByVolatility()
+
+    bbws = sorted(bg[0] for bg in bbw_gains)
+    n = len(bbws)
+    low_threshold = bbws[n // 3]
+    high_threshold = bbws[(2 * n) // 3]
+
+    def _avg(vals: list[float]) -> float | None:
+        return sum(vals) / len(vals) if vals else None
+
+    low_gains = [g for bw, g in bbw_gains if bw <= low_threshold]
+    mid_gains = [g for bw, g in bbw_gains if low_threshold < bw <= high_threshold]
+    high_gains = [g for bw, g in bbw_gains if bw > high_threshold]
+
+    return GainByVolatility(
+        low=_avg(low_gains),
+        medium=_avg(mid_gains),
+        high=_avg(high_gains),
+    )
+
+
+def _percentile(values: list[float], p: float) -> float:
+    """Return the p-th percentile of values using linear interpolation."""
+    if not values:
+        return 0.0
+    sorted_vals = sorted(values)
+    n = len(sorted_vals)
+    idx = p / 100 * (n - 1)
+    lo = int(idx)
+    hi = lo + 1
+    if hi >= n:
+        return sorted_vals[lo]
+    return sorted_vals[lo] + (idx - lo) * (sorted_vals[hi] - sorted_vals[lo])
+
+
+def _streaks(gains: list[float]) -> tuple[int, int]:
+    """Return (longest_win_streak, longest_loss_streak)."""
+    max_win = max_loss = cur_win = cur_loss = 0
+    for g in gains:
+        if g > 0:
+            cur_win += 1
+            cur_loss = 0
+        else:
+            cur_loss += 1
+            cur_win = 0
+        max_win = max(max_win, cur_win)
+        max_loss = max(max_loss, cur_loss)
+    return max_win, max_loss
+
+
 def _score(
     rule_id: str,
     description: str,
@@ -200,6 +327,13 @@ def _score(
     gains_pct = [s["outcome"]["gain_pct"] for s in matching]
     avg_gain_pct = sum(gains_pct) / len(gains_pct)
     positive_rate = sum(1 for g in gains_pct if g > 0) / len(gains_pct)
+    min_gain_pct = min(gains_pct)
+    p25_gain_pct = _percentile(gains_pct, 25)
+    p75_gain_pct = _percentile(gains_pct, 75)
+    longest_win_streak, longest_loss_streak = _streaks(gains_pct)
+    weekly = _weekly_counts(matching)
+    trend = _signal_trend(weekly)
+    gain_by_vol = _gain_by_volatility(matching, config)
 
     latest_ts = max((_parse(s["emitted_at"]) for s in matching if s.get("emitted_at")), default=None)
     cutoff_48h = (latest_ts - timedelta(hours=48)) if latest_ts else None
@@ -249,6 +383,14 @@ def _score(
         positive_rate=positive_rate,
         avg_gain_24h=avg_gain_24h,
         max_gain_24h=max_gain_24h,
+        min_gain_pct=min_gain_pct,
+        p25_gain_pct=p25_gain_pct,
+        p75_gain_pct=p75_gain_pct,
+        longest_win_streak=longest_win_streak,
+        longest_loss_streak=longest_loss_streak,
+        weekly_signal_counts=weekly,
+        signal_trend=trend,
+        avg_gain_by_volatility=gain_by_vol,
         score=score,
         status=status,
     )

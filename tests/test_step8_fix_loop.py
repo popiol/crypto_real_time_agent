@@ -6,7 +6,7 @@ introduce a syntax error, then runs _fix_with_diff until the code compiles.
 
 from src.updater.llm import make_llm
 from src.updater.models import RuleIdea
-from src.updater.steps.step8_implement_idea import (
+from src.updater.steps.step7_implement_idea import (
     _MAX_FIX_ATTEMPTS,
     _check_syntax,
     _fix_with_diff,

@@ -36,6 +36,54 @@ class RuleDescriptions(BaseModel):
     rules: list[RuleDescription]
 
 
+class Indicator(BaseModel):
+    indicator_id: str
+    name: str
+    description: str
+    code: str  # def compute(data: PairData) -> float | None
+
+
+class IndicatorSet(BaseModel):
+    version: str        # uuid4, changes when the set is modified
+    indicators: list[Indicator]
+    updated_at: str
+
+
+class NextCyclePlan(BaseModel):
+    action: Literal["continue", "fix", "new_rule"]
+    description: str | None = None
+
+
+class TrainSample(BaseModel):
+    signal_id: str
+    cycle_id: str
+    pair: str
+    rule_id: str
+    indicators: dict[str, float | None]
+    target_gain_pct: float
+
+
+class TrainSet(BaseModel):
+    samples: list[TrainSample] = []
+
+
+class EpisodicTrace(BaseModel):
+    trace_id: str
+    cycle_id: str
+    hypothesis: str
+    rule_id: str
+    indicator_set_version: str
+    outcome_metrics: dict[str, float]
+    diagnosis: str
+    embedding: list[float] = []
+
+
+class GainByVolatility(BaseModel):
+    low: float | None = None
+    medium: float | None = None
+    high: float | None = None
+
+
 class RuleScore(BaseModel):
     rule_id: str
     description: str
@@ -47,6 +95,14 @@ class RuleScore(BaseModel):
     positive_rate: float
     avg_gain_24h: float
     max_gain_24h: float
+    min_gain_pct: float = 0.0
+    p25_gain_pct: float = 0.0
+    p75_gain_pct: float = 0.0
+    longest_win_streak: int = 0
+    longest_loss_streak: int = 0
+    weekly_signal_counts: list[int] = []
+    signal_trend: Literal["increasing", "decreasing", "stable"] = "stable"
+    avg_gain_by_volatility: GainByVolatility = GainByVolatility()
     score: float
     status: Literal["candidate", "active", "deprecate"]
     zero_signal_cycles: int = 0

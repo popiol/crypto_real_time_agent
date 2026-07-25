@@ -162,6 +162,17 @@ def read_warm_candles(pair: str, config: AppConfig) -> list[WarmCandle]:
     return [_candle_from_row(r) for r in rows]
 
 
+def read_warm_candles_range(pair: str, since: "datetime", config: AppConfig) -> list["WarmCandle"]:
+    """Return all warm candles for *pair* at or after *since*, oldest first."""
+    from datetime import datetime  # noqa: F401 (used in type hint string above)
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT * FROM warm_candles WHERE pair=? AND hour >= ? ORDER BY hour ASC",
+            (pair, since.isoformat()),
+        ).fetchall()
+    return [_candle_from_row(r) for r in rows]
+
+
 def write_warm_candles(candles: list[WarmCandle], pair: str, config: AppConfig) -> None:
     with open_db(config.data_dir) as con:
         _upsert_warm_candles(candles, pair, con)

@@ -1,6 +1,6 @@
 """Strategy Updater pipeline orchestrator.
 
-Runs all 8 steps sequentially. Each step reads its inputs from persisted
+Runs all active steps sequentially. Each step reads its inputs from persisted
 state files and writes its output before the next step begins, making the
 pipeline resumable and auditable.
 
@@ -20,27 +20,25 @@ from typing import Callable
 
 from src.agent.models import AppConfig
 from src.updater.steps import (
-    step1_analyze_results,
-    step2_analyze_rules,
-    step3_compare_versions,
-    step4_derive_conclusions,
-    step5_update_plan,
-    step6_generate_ideas,
-    step7_evaluate_ideas,
-    step8_implement_idea,
+    step1_indicator_set,
+    step2_compute_indicators,
+    step3_analyze_results,
+    step4_analyze_rules,
+    step5_train_set,
+    step6_episodic_trace,
+    step7_implement_idea,
 )
 
 logger = logging.getLogger(__name__)
 
 _STEPS: list[tuple[str, Callable]] = [
-    ("1 analyze_results", step1_analyze_results.run),
-    ("2 analyze_rules", step2_analyze_rules.run),
-    ("3 compare_versions", step3_compare_versions.run),
-    ("4 derive_conclusions", step4_derive_conclusions.run),
-    ("5 update_plan", step5_update_plan.run),
-    ("6 generate_ideas", step6_generate_ideas.run),
-    ("7 evaluate_ideas", step7_evaluate_ideas.run),
-    ("8 implement_idea", step8_implement_idea.run),
+    ("1 indicator_set", step1_indicator_set.run),
+    ("2 compute_indicators", step2_compute_indicators.run),
+    ("3 analyze_results", step3_analyze_results.run),
+    ("4 analyze_rules", step4_analyze_rules.run),
+    ("5 train_set", step5_train_set.run),
+    ("6 episodic_trace", step6_episodic_trace.run),
+    ("7 implement_idea", step7_implement_idea.run),
 ]
 
 
@@ -48,15 +46,15 @@ _STATE_FILES = [
     "signal_evaluation.json",
     "rule_descriptions.json",
     "rule_evaluation.json",
-    "version_comparison.json",
-    "conclusions.json",
-    "long_term_plan.json",
-    "idea_backlog.json",
+    "indicator_set.json",
+    "indicator_values.json",
+    "train_set.json",
+    "last_implemented.json",
 ]
 
 
 def run(config: AppConfig) -> None:
-    """Execute the full 8-step Strategy Updater pipeline."""
+    """Execute the Strategy Updater pipeline."""
     state_dir = Path(config.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
 

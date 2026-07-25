@@ -121,3 +121,6 @@ class AppConfig(BaseModel):
     portfolio_min_recent_gain: float = 0.005
     portfolio_fee: float = 0.0025
     portfolio_max_position_hours: int = 24
+    embedding_model: str = "models/text-embedding-004"
+    trace_top_k: int = 5
+    cycle_success_threshold: float = 0.005  # avg_gain_pct above which a cycle is considered successful
