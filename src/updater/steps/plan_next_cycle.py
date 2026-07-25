@@ -37,6 +37,11 @@ from src.updater.models import NextCyclePlan, RelationAnalysis, RuleEvaluation, 
 
 logger = logging.getLogger(__name__)
 
+# Below this many closed transactions, avg_transaction_gain alone is too thin
+# a sample to trust on its own — blend it with recent signal performance.
+# At or above it, real realized performance is trusted exclusively.
+_MATURE_TRANSACTION_COUNT = 10
+
 _FAILURE_DIAGNOSIS_SYSTEM = (
     "You are a trading system analyst reviewing the outcome of a deployed rule. "
     "Given performance metrics and relation analysis findings, determine whether "
@@ -207,11 +212,16 @@ def write_next_cycle_plan(
 
 
 def _performance_metric(rule_score: RuleScore) -> tuple[float, str]:
-    """Return (value, metric_name) to judge a rule's performance by: recent
-    signal performance plus the portfolio's actual realized result, net of
-    fees. Same formula as portfolio.py's own trading gate. Degrades
-    gracefully when the portfolio hasn't closed any transactions for this
-    rule yet, since avg_transaction_gain is 0.0 by construction in that case.
+    """Return (value, metric_name) to judge a rule's performance by.
+
+    Below _MATURE_TRANSACTION_COUNT closed transactions: recent signal
+    performance plus realized transaction gain (same formula as portfolio.py's
+    own trading gate) — with few real trades, blending in the signal-level
+    metric gives a less noisy read. At or above it, avg_transaction_gain alone
+    — with enough real trades, trust what actually happened over the
+    signal-theoretical figure.
     """
-    combined = rule_score.recent_avg_gain_pct + rule_score.avg_transaction_gain
-    return combined, "recent_avg_gain_pct+avg_transaction_gain"
+    if rule_score.transaction_count < _MATURE_TRANSACTION_COUNT:
+        combined = rule_score.recent_avg_gain_pct + rule_score.avg_transaction_gain
+        return combined, "recent_avg_gain_pct+avg_transaction_gain"
+    return rule_score.avg_transaction_gain, "avg_transaction_gain"

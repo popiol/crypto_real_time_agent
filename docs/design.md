@@ -300,7 +300,9 @@ Traces are never edited. The `embedding` field is computed from the hypothesis t
 *Inputs*: `rule_evaluation.json` (score for the currently active rule), episodic trace (from step 8)  
 *Output*: `data/state/next_cycle_plan.json`
 
-Decision logic, evaluated fresh every cycle against whichever rule is currently active. The metric judged is `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3) — which degrades gracefully to just `recent_avg_gain_pct` while the portfolio hasn't closed any transactions for the rule yet, since `avg_transaction_gain` is `0.0` by construction until then:
+Decision logic, evaluated fresh every cycle against whichever rule is currently active. The metric judged depends on `transaction_count`, the number of transactions the portfolio has actually closed for the rule:
+- Below 10 transactions: `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3). With few real trades, blending in the signal-theoretical figure gives a less noisy read; it degrades gracefully to just `recent_avg_gain_pct` while `transaction_count` is `0`, since `avg_transaction_gain` is `0.0` by construction until then.
+- At 10 or more: `avg_transaction_gain` alone. With enough real trades to be a trustworthy sample, the realized result is trusted exclusively — a rule with a rosy theoretical `recent_avg_gain_pct` but real losses no longer gets a pass.
 - If that metric > 0.5% (or the rule has too few signals to score yet): `action: continue` — leave the indicator set and the active rule alone.
 - Otherwise: LLM attempts to diagnose whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
   - If fixable: `action: fix` with a description of the specific change to attempt.
