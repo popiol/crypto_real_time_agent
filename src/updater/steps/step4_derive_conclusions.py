@@ -15,6 +15,7 @@ import logging
 from pathlib import Path
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import (
     Conclusions,
@@ -36,8 +37,8 @@ _SYSTEM = (
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    rule_eval_path = state_dir / "rule_evaluation.json"
-    version_cmp_path = state_dir / "version_comparison.json"
+    rule_eval_path = paths.rule_evaluation(state_dir)
+    version_cmp_path = paths.version_comparison(state_dir)
 
     if not rule_eval_path.exists() or not version_cmp_path.exists():
         logger.info("rule_evaluation.json or version_comparison.json not found; skipping step 4")
@@ -99,7 +100,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
             logger.warning("LLM call failed for rule %s", cmp.rule_name, exc_info=True)
 
     output = Conclusions(conclusions=conclusions)
-    (state_dir / "conclusions.json").write_text(
+    paths.conclusions(state_dir).write_text(
         output.model_dump_json(indent=2), encoding="utf-8"
     )
     logger.info("conclusions.json written (%d conclusion(s))", len(conclusions))

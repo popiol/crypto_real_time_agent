@@ -16,6 +16,7 @@ import uuid
 from pathlib import Path
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import IdeaBacklog, LongTermPlan, RuleEvaluation, RuleIdea
 
@@ -27,13 +28,13 @@ _MIN_TOP_SCORE = 0.6
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    plan_path = state_dir / "long_term_plan.json"
+    plan_path = paths.long_term_plan(state_dir)
     if not plan_path.exists():
         logger.info("long_term_plan.json not found; skipping step 6")
         return
 
     plan = LongTermPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
-    backlog = _load_backlog(state_dir / "idea_backlog.json")
+    backlog = _load_backlog(paths.idea_backlog(state_dir))
 
     if _stop_conditions_met(backlog.ideas):
         logger.info("Step 6 stop conditions already met; skipping idea generation")
@@ -56,7 +57,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
             logger.warning("Idea generation LLM call failed", exc_info=True)
             break
 
-    (state_dir / "idea_backlog.json").write_text(
+    paths.idea_backlog(state_dir).write_text(
         backlog.model_dump_json(indent=2), encoding="utf-8"
     )
     logger.info("idea_backlog.json written (%d total ideas, %d new)", len(backlog.ideas), generated)
@@ -115,7 +116,7 @@ def _load_backlog(path: Path) -> IdeaBacklog:
 
 
 def _rule_summary(state_dir: Path) -> str:
-    eval_path = state_dir / "rule_evaluation.json"
+    eval_path = paths.rule_evaluation(state_dir)
     if eval_path.exists():
         try:
             evaluation = RuleEvaluation.model_validate_json(eval_path.read_text(encoding="utf-8"))

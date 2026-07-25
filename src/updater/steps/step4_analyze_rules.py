@@ -22,6 +22,7 @@ import sys
 
 from src.agent import storage
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import GainByVolatility, RuleEvaluation, RuleScore
 
@@ -52,7 +53,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     transaction_gains = _load_transaction_gains(config)
 
     # Load caches from the prior run's rule_evaluation.json
-    prior_eval_path = state_dir / "rule_evaluation.json"
+    prior_eval_path = paths.rule_evaluation(state_dir)
     desc_cache: dict[str, str] = _load_desc_cache(prior_eval_path)
     zero_cycles_cache: dict[str, int] = _load_zero_cycles_cache(prior_eval_path)
 
@@ -79,7 +80,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         logger.warning("Rule evaluation summary LLM call failed", exc_info=True)
         summary = ""
 
-    (state_dir / "rule_evaluation.json").write_text(
+    paths.rule_evaluation(state_dir).write_text(
         RuleEvaluation(rules=scores, summary=summary).model_dump_json(indent=2),
         encoding="utf-8",
     )

@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import Conclusions, LongTermPlan, RuleEvaluation
 
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    conclusions_path = state_dir / "conclusions.json"
+    conclusions_path = paths.conclusions(state_dir)
     if not conclusions_path.exists():
         logger.info("conclusions.json not found; skipping step 5")
         return
@@ -28,7 +29,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     )
 
     rule_eval_text = "No rule evaluation available."
-    rule_eval_path = state_dir / "rule_evaluation.json"
+    rule_eval_path = paths.rule_evaluation(state_dir)
     if rule_eval_path.exists():
         try:
             rule_eval = RuleEvaluation.model_validate_json(

@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import IdeaBacklog, LongTermPlan
 
@@ -21,7 +22,7 @@ _REJECT_THRESHOLD = 0.2
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    backlog_path = state_dir / "idea_backlog.json"
+    backlog_path = paths.idea_backlog(state_dir)
     if not backlog_path.exists():
         logger.info("idea_backlog.json not found; skipping step 7")
         return
@@ -33,7 +34,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         return
 
     plan_text = "No plan available."
-    plan_path = state_dir / "long_term_plan.json"
+    plan_path = paths.long_term_plan(state_dir)
     if plan_path.exists():
         try:
             plan = LongTermPlan.model_validate_json(

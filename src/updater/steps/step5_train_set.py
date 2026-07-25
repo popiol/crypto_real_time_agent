@@ -15,14 +15,15 @@ from pathlib import Path
 
 from src.agent import storage
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.models import TrainSample, TrainSet
 
 logger = logging.getLogger(__name__)
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    values_path = state_dir / "indicator_values.json"
-    train_path = state_dir / "train_set.json"
+    values_path = paths.indicator_values(state_dir)
+    train_path = paths.train_set(state_dir)
 
     # Load indicator values (pair → {name → value})
     if not values_path.exists():
@@ -100,7 +101,7 @@ def _load_train_set(path: Path) -> TrainSet:
 
 def _current_cycle_id(state_dir: Path) -> str:
     """Return the cycle_id from last_implemented.json, or a fallback."""
-    last_path = state_dir / "last_implemented.json"
+    last_path = paths.last_implemented(state_dir)
     if last_path.exists():
         try:
             data = json.loads(last_path.read_text(encoding="utf-8"))

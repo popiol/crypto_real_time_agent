@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 import src.agent.models as _agent_models
 from src.agent.db import open_db
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.code_diff import CodeDiff, apply_changes
 from src.updater.llm import llm_structured, make_llm
 from src.updater.models import (
@@ -255,7 +256,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
 
 def _load_current_plan(state_dir: Path) -> NextCyclePlan:
-    path = state_dir / "next_cycle_plan.json"
+    path = paths.next_cycle_plan(state_dir)
     if not path.exists():
         return NextCyclePlan(action="new_rule", description=None)
     try:
@@ -266,7 +267,7 @@ def _load_current_plan(state_dir: Path) -> NextCyclePlan:
 
 
 def _load_last_implemented(state_dir: Path) -> tuple[str | None, str | None]:
-    path = state_dir / "last_implemented.json"
+    path = paths.last_implemented(state_dir)
     if not path.exists():
         return None, None
     try:
@@ -278,7 +279,7 @@ def _load_last_implemented(state_dir: Path) -> tuple[str | None, str | None]:
 
 
 def _get_rule_score(state_dir: Path, rule_id: str) -> RuleScore | None:
-    path = state_dir / "rule_evaluation.json"
+    path = paths.rule_evaluation(state_dir)
     if not path.exists():
         return None
     try:
@@ -322,7 +323,7 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 def _retrieve_top_k_traces(
     state_dir: Path, query_text: str | None, config: AppConfig
 ) -> list[EpisodicTrace]:
-    traces_dir = state_dir / "traces"
+    traces_dir = paths.traces_dir(state_dir)
     if not traces_dir.exists():
         return []
 
@@ -379,7 +380,7 @@ def _retrieve_top_k_traces(
 
 
 def _load_indicator_values(state_dir: Path) -> dict[str, dict[str, float | None]]:
-    path = state_dir / "indicator_values.json"
+    path = paths.indicator_values(state_dir)
     if not path.exists():
         return {}
     try:
@@ -390,7 +391,7 @@ def _load_indicator_values(state_dir: Path) -> dict[str, dict[str, float | None]
 
 
 def _load_recent_train_samples(state_dir: Path, n: int) -> list[dict]:
-    path = state_dir / "train_set.json"
+    path = paths.train_set(state_dir)
     if not path.exists():
         return []
     try:
@@ -495,7 +496,7 @@ def _write_next_cycle_plan(
     analysis: _RelationAnalysis,
     config: AppConfig,
 ) -> None:
-    plan_path = state_dir / "next_cycle_plan.json"
+    plan_path = paths.next_cycle_plan(state_dir)
 
     if last_rule_id is None:
         # First cycle: no previous rule to evaluate
@@ -570,7 +571,7 @@ def _diagnose_failure(
 
 
 def _write_last_implemented(state_dir: Path, rule_id: str, cycle_id: str) -> None:
-    path = state_dir / "last_implemented.json"
+    path = paths.last_implemented(state_dir)
     path.write_text(
         json.dumps({"rule_id": rule_id, "cycle_id": cycle_id}, indent=2),
         encoding="utf-8",
@@ -791,7 +792,7 @@ def _register_rule(strategy_path: Path, rule_id: str) -> None:
 def _unregister_dropped(state_dir: Path, config: AppConfig) -> None:
     to_remove: list[str] = []
 
-    rule_eval_path = state_dir / "rule_evaluation.json"
+    rule_eval_path = paths.rule_evaluation(state_dir)
     if rule_eval_path.exists():
         try:
             evaluation = RuleEvaluation.model_validate_json(
@@ -835,7 +836,7 @@ def _unregister_rule(strategy_path: Path, rule_id: str) -> None:
 
 
 def _remove_from_rule_evaluation(state_dir: Path, rule_id: str) -> None:
-    rule_eval_path = state_dir / "rule_evaluation.json"
+    rule_eval_path = paths.rule_evaluation(state_dir)
     if not rule_eval_path.exists():
         return
     try:

@@ -14,6 +14,7 @@ from pathlib import Path
 
 from src.agent import storage
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.models import PairMetrics, RuleSignalEvaluation, SignalEvaluation
 
 logger = logging.getLogger(__name__)
@@ -36,7 +37,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     for rule_id, signals in by_rule.items():
         rule_evals.append(_compute(rule_id, signals))
 
-    out = state_dir / "signal_evaluation.json"
+    out = paths.signal_evaluation(state_dir)
     out.write_text(SignalEvaluation(rules=rule_evals).model_dump_json(indent=2), encoding="utf-8")
     logger.info("signal_evaluation.json written (%d rules)", len(rule_evals))
 

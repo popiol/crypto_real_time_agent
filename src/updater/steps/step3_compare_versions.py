@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.models import (
     RuleEvaluation,
     RuleVersionComparison,
@@ -26,7 +27,7 @@ _DROP_MARGIN = 0.15  # drop a version if its score is this much below the best
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    rule_eval_path = state_dir / "rule_evaluation.json"
+    rule_eval_path = paths.rule_evaluation(state_dir)
     if not rule_eval_path.exists():
         logger.info("rule_evaluation.json not found; skipping step 3")
         return
@@ -95,7 +96,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
             f"marked {total_dropped} version(s) for dropping."
         ),
     )
-    (state_dir / "version_comparison.json").write_text(
+    paths.version_comparison(state_dir).write_text(
         result.model_dump_json(indent=2), encoding="utf-8"
     )
     logger.info(

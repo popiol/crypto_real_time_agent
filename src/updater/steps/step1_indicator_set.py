@@ -30,6 +30,7 @@ from pydantic import BaseModel
 
 import src.agent.models as _agent_models
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.code_diff import CodeDiff, apply_changes
 from src.updater.llm import llm_structured, make_llm
 from src.updater.models import Indicator, IndicatorSet, NextCyclePlan
@@ -96,8 +97,8 @@ class _IndicatorSpecList(BaseModel):
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    set_path = state_dir / "indicator_set.json"
-    plan_path = state_dir / "next_cycle_plan.json"
+    set_path = paths.indicator_set(state_dir)
+    plan_path = paths.next_cycle_plan(state_dir)
 
     if set_path.exists():
         action, plan_description = _read_plan(plan_path)

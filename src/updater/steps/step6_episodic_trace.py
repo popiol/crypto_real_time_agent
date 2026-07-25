@@ -26,6 +26,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import EpisodicTrace, IndicatorSet, RuleEvaluation, RuleScore
 
@@ -44,7 +45,7 @@ class _Diagnosis(BaseModel):
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    traces_dir = state_dir / "traces"
+    traces_dir = paths.traces_dir(state_dir)
     traces_dir.mkdir(exist_ok=True)
 
     rule_id, cycle_id = _resolve_target_rule(state_dir)
@@ -52,7 +53,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         logger.info("No implemented rule to trace; skipping episodic trace step")
         return
 
-    trace_path = traces_dir / f"{cycle_id}.json"
+    trace_path = paths.trace_file(state_dir, cycle_id)
     if trace_path.exists():
         logger.info("Trace for cycle %s already exists; skipping", cycle_id)
         return
@@ -98,7 +99,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
 def _resolve_target_rule(state_dir: Path) -> tuple[str | None, str]:
     """Return (rule_id, cycle_id) for the rule to trace."""
-    last_path = state_dir / "last_implemented.json"
+    last_path = paths.last_implemented(state_dir)
     if last_path.exists():
         try:
             data = json.loads(last_path.read_text(encoding="utf-8"))
@@ -107,7 +108,7 @@ def _resolve_target_rule(state_dir: Path) -> tuple[str | None, str]:
             logger.warning("Could not read last_implemented.json", exc_info=True)
 
     # Fallback: pick the most recently active rule (lowest evaluation_days among active)
-    rule_eval_path = state_dir / "rule_evaluation.json"
+    rule_eval_path = paths.rule_evaluation(state_dir)
     if rule_eval_path.exists():
         try:
             evaluation = RuleEvaluation.model_validate_json(
@@ -128,7 +129,7 @@ def _now_cycle_id() -> str:
 
 
 def _load_rule_score(state_dir: Path, rule_id: str) -> RuleScore | None:
-    path = state_dir / "rule_evaluation.json"
+    path = paths.rule_evaluation(state_dir)
     if not path.exists():
         return None
     try:
@@ -140,7 +141,7 @@ def _load_rule_score(state_dir: Path, rule_id: str) -> RuleScore | None:
 
 
 def _load_indicator_version(state_dir: Path) -> str:
-    path = state_dir / "indicator_set.json"
+    path = paths.indicator_set(state_dir)
     if not path.exists():
         return "none"
     try:

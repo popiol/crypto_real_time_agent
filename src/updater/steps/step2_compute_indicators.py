@@ -18,14 +18,15 @@ from pathlib import Path
 
 from src.agent import storage
 from src.agent.models import AppConfig, PairData
+from src.updater import paths
 from src.updater.models import IndicatorSet
 
 logger = logging.getLogger(__name__)
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    values_path = state_dir / "indicator_values.json"
-    set_path = state_dir / "indicator_set.json"
+    values_path = paths.indicator_values(state_dir)
+    set_path = paths.indicator_set(state_dir)
     if not set_path.exists():
         logger.info("indicator_set.json not found; skipping indicator computation")
         values_path.write_text("{}", encoding="utf-8")

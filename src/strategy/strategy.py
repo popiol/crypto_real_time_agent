@@ -15,6 +15,7 @@ import logging
 from types import ModuleType
 
 import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
+import src.strategy.rules.rule_48_volatility_differentiated_dip_.v1 as rule_48_volatility_differentiated_dip__v1
 import src.strategy.rules.rule_47_deep_volatile_dip_buy_strategy.v1 as rule_47_deep_volatile_dip_buy_strategy_v1
 import src.strategy.rules.rule_46_adaptive_bollinger_band_revers.v1 as rule_46_adaptive_bollinger_band_revers_v1
 import src.strategy.rules.rule_02_bollinger_band.v6 as rule_02_bollinger_band_v6
@@ -41,6 +42,7 @@ ACTIVE_RULES: list[ModuleType] = [
     rule_45_bollinger_band_reversal_with_m_v1,
     rule_46_adaptive_bollinger_band_revers_v1,
     rule_47_deep_volatile_dip_buy_strategy_v1,
+    rule_48_volatility_differentiated_dip__v1,
 ]
 
 
