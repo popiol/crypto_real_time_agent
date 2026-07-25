@@ -1,4 +1,4 @@
-"""Step 1 — Analyze results.
+"""Step 3 — Analyze results.
 
 Groups evaluated buy-signal outcomes by rule_id and computes per-rule
 metrics numerically. No LLM call — pure computation from the signal ledger.
@@ -26,7 +26,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         if r.get("outcome") is not None and r.get("direction", "buy") == "buy"
     ]
     if not evaluated:
-        logger.info("No evaluated signals yet; skipping step 1")
+        logger.info("No evaluated signals yet; skipping step 3")
         return
 
     by_rule: dict[str, list[dict]] = defaultdict(list)
