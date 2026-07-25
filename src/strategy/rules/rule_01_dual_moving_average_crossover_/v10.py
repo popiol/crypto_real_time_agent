@@ -90,9 +90,9 @@ MarketData = dict[str, PairData]
 RSI_PERIOD = 14
 BB_PERIOD = 20
 BB_K = 2.0 # Standard deviation multiplier for Bollinger Bands
-SMA_PERIOD = 20 # Period for Simple Moving Average used in Price Deviation calculation
+SMA_PERIOD = 20 # Period for Simple Moving Average (though not directly used in final conditions)
 
-RULE_ID = "BB_PercentB_Adjust_001"
+RULE_ID = "RSI-BB-Relax-V2"
 
 
 def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
@@ -182,21 +182,18 @@ def _calculate_bollinger_bands_percent_b(prices: np.ndarray, period: int, k: flo
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     """
-    Implements the 'BB_PercentB_Adjust_001' trading rule.
+    Implements the 'RSI-BB-Relax-V2' trading rule.
 
-    This rule modifies a Bollinger Bands %B mean-reversion strategy by adjusting
-    entry thresholds for extreme overbought/oversold conditions, reinforced by
-    RSI and Price Deviation from SMA.
+    This rule adjusts the Relative Strength Index (RSI) thresholds for the
+    existing Bollinger Bands (%B) mean reversion rule.
 
     A buy signal is generated when:
     - Bollinger Bands %B is below 0.2
-    - RSI is below 35
-    - Price Deviation from SMA is negative (price is below SMA)
+    - RSI is below 40
 
     A sell signal is generated when:
     - Bollinger Bands %B is above 0.8
-    - RSI is above 75
-    - Price Deviation from SMA is positive (price is above SMA)
+    - RSI is above 60
     """
     signals: list[BuySignal | SellSignal] = []
 
@@ -205,7 +202,6 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 
         # Determine the maximum number of candles required for all indicators
         # RSI needs PERIOD + 1. BB/SMA needs PERIOD.
-        # So, we need max(RSI_PERIOD + 1, BB_PERIOD, SMA_PERIOD) candles.
         required_data_points = max(RSI_PERIOD + 1, BB_PERIOD, SMA_PERIOD)
 
         if len(warm_data) < required_data_points:
@@ -218,23 +214,19 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         # Calculate indicators
         rsi_series = _calculate_rsi(prices, RSI_PERIOD)
         bb_percent_b_series = _calculate_bollinger_bands_percent_b(prices, BB_PERIOD, BB_K)
-        sma_series = _calculate_sma(prices, SMA_PERIOD) # SMA for price deviation
+        # SMA is calculated but not used in the final conditions of this rule version
+        _ = _calculate_sma(prices, SMA_PERIOD) 
 
         # Ensure we have at least one valid value for each indicator
-        if len(rsi_series) == 0 or len(bb_percent_b_series) == 0 or len(sma_series) == 0:
+        if len(rsi_series) == 0 or len(bb_percent_b_series) == 0:
             continue
 
         # Get the latest values for each indicator
         last_rsi = rsi_series[-1]
         last_bb_percent_b = bb_percent_b_series[-1]
-        last_sma = sma_series[-1] # SMA value corresponding to the latest price
-        last_price = prices[-1] # The latest close price
-
-        # Calculate Price Deviation from SMA for the last candle
-        price_deviation_sma = last_price - last_sma
 
         # Check for potential NaN/Inf in indicator values before using them
-        if not (np.isfinite(last_rsi) and np.isfinite(last_bb_percent_b) and np.isfinite(price_deviation_sma)):
+        if not (np.isfinite(last_rsi) and np.isfinite(last_bb_percent_b)):
             continue
 
         # Determine the most recent price and timestamp for the signal.
@@ -254,20 +246,18 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             # No current price available from hot or warm data. Cannot generate a relevant signal.
             continue
 
-        # Apply the rule's conditions for long entry
+        # Apply the rule's conditions for long entry (RSI < 40, BB%B < 0.2)
         if (last_bb_percent_b < 0.2 and
-            last_rsi < 35 and
-            price_deviation_sma < 0):
+            last_rsi < 40):
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
                 price=current_price,
                 rule_id=RULE_ID
             ))
-        # Apply the rule's conditions for short entry
+        # Apply the rule's conditions for short entry (RSI > 60, BB%B > 0.8)
         elif (last_bb_percent_b > 0.8 and
-              last_rsi > 75 and
-              price_deviation_sma > 0):
+              last_rsi > 60):
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
