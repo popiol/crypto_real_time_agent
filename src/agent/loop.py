@@ -9,9 +9,7 @@ Runs continuously:
 
 from __future__ import annotations
 
-import importlib
 import logging
-import sys
 import time
 import uuid
 
@@ -52,8 +50,7 @@ def run_strategy(ticks: list[Tick], config: AppConfig) -> list[BuySignal | SellS
             )
             for tick in ticks
         }
-        importlib.reload(sys.modules["src.strategy.strategy"])
-        signals = list(_strategy.find_signals(market_data))
+        signals = list(_strategy.find_signals(market_data, config))
         volume_usd = {t.pair: t.volume_24h * t.last_price for t in ticks}
         return [
             s for s in signals

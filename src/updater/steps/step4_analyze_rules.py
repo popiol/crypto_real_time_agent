@@ -17,9 +17,6 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-import importlib
-import sys
-
 from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
@@ -44,10 +41,12 @@ class _RuleDesc(BaseModel):
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    strategy = sys.modules.get("src.strategy.strategy")
-    if strategy is not None:
-        importlib.reload(strategy)
-    from src.strategy.strategy import ACTIVE_RULE
+    from src.strategy.strategy import get_active_rule
+
+    active_rule = get_active_rule(config)
+    if active_rule is None:
+        logger.info("No active rule yet (nothing implemented); skipping rule analysis")
+        return
 
     ledger_signals = storage.read_signals(config)
     transaction_gains = _load_transaction_gains(config)
@@ -57,9 +56,9 @@ def run(config: AppConfig, state_dir: Path) -> None:
     desc_cache: dict[str, str] = _load_desc_cache(prior_eval_path)
     zero_cycles_cache: dict[str, int] = _load_zero_cycles_cache(prior_eval_path)
 
-    parts = ACTIVE_RULE.__name__.split(".")
+    parts = active_rule.__name__.split(".")
     rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
-    description = _describe(rule_id, ACTIVE_RULE, desc_cache, config.llm_model)
+    description = _describe(rule_id, active_rule, desc_cache, config.llm_model)
     desc_cache[rule_id] = description
     scores: list[RuleScore] = [
         _score(rule_id, description, ledger_signals, zero_cycles_cache, transaction_gains, config)

@@ -79,7 +79,6 @@ _MODELS_SOURCE = (
 )
 
 _RULES_DIR = Path("src/strategy/rules")
-_STRATEGY_FILE = Path("src/strategy/strategy.py")
 
 _MAX_FIX_ATTEMPTS = 10
 _MAX_TRAIN_SAMPLES = 100  # cap sent to LLM
@@ -254,7 +253,6 @@ def run(config: AppConfig, state_dir: Path) -> None:
         implemented = _generate_code(idea, rule_id, config.llm_model)
         rule_path.parent.mkdir(parents=True, exist_ok=True)
         rule_path.write_text(implemented.code, encoding="utf-8")
-        _set_active_rule(_STRATEGY_FILE, rule_id)
         _commit_and_push(rule_id, implemented.function_name)
         implemented_rule_id = rule_id
         logger.info("Implemented rule %s at %s", rule_id, rule_path)
@@ -651,14 +649,6 @@ def _next_rule_path(idea: RuleIdea) -> tuple[str, Path]:
         return rule_id, _RULES_DIR / folder_name / "v1.py"
 
 
-def _rule_id_to_import_path(rule_id: str) -> str:
-    """Convert 'rule_01_spread_compression_v1' → 'rule_01_spread_compression.v1'."""
-    m = re.match(r"^(.+)_(v\d+)$", rule_id)
-    if m:
-        return f"{m.group(1)}.{m.group(2)}"
-    return rule_id
-
-
 def _check_syntax(code: str) -> str | None:
     """Return an error description, or None if the code is a valid complete rule."""
     try:
@@ -799,34 +789,6 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
         function_name="signal",
         code=code,
     )
-
-
-# ── Strategy registration ─────────────────────────────────────────────────────
-
-
-def _set_active_rule(strategy_path: Path, rule_id: str) -> None:
-    """Replace the currently active rule with `rule_id`.
-
-    Exactly one rule is ever active (see strategy.py), so implementing a new
-    rule always replaces whichever one was previously active — there is no
-    separate "unregister" step. The old rule's file is left on disk under
-    strategy/rules/ for signal traceability.
-    """
-    content = strategy_path.read_text(encoding="utf-8")
-    import_path = _rule_id_to_import_path(rule_id)
-    new_import = f"import src.strategy.rules.{import_path} as ACTIVE_RULE"
-    content, n = re.subn(
-        r"^import src\.strategy\.rules\.\S+ as ACTIVE_RULE$",
-        new_import,
-        content,
-        count=1,
-        flags=re.MULTILINE,
-    )
-    if n == 0:
-        raise ValueError("strategy.py has no 'import ... as ACTIVE_RULE' line to replace")
-
-    strategy_path.write_text(content, encoding="utf-8")
-    logger.info("Set active rule to %s in strategy.py", rule_id)
 
 
 def _commit_and_push(rule_id: str, function_name: str) -> None:
