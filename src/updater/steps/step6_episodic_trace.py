@@ -103,9 +103,11 @@ def _resolve_target_rule(
 
     Uses the cycle_id recorded in last_implemented.json — the cycle that
     actually implemented this rule, which is always written alongside
-    rule_id (see plan_next_cycle.write_last_implemented). Only the fallback
-    paths below, where there's no rule-specific cycle to report, use the
-    current pipeline cycle_id instead.
+    rule_id (see plan_next_cycle.write_last_implemented). last_implemented.json
+    is the sole source of truth for which rule is active (see strategy.py's
+    get_active_rule): if it's missing, rule_evaluation.json can't hold a
+    trustworthy answer either, since step4_analyze_rules only ever scores
+    whatever this file says is active.
     """
     last_path = paths.last_implemented(state_dir)
     if last_path.exists():
@@ -114,20 +116,6 @@ def _resolve_target_rule(
             return data["rule_id"], data["cycle_id"]
         except Exception:
             logger.warning("Could not read last_implemented.json", exc_info=True)
-
-    # Fallback: pick the most recently active rule (lowest evaluation_days among active)
-    rule_eval_path = paths.rule_evaluation(state_dir)
-    if rule_eval_path.exists():
-        try:
-            evaluation = RuleEvaluation.model_validate_json(
-                rule_eval_path.read_text(encoding="utf-8")
-            )
-            active = [r for r in evaluation.rules if r.status in ("active", "candidate")]
-            if active:
-                newest = min(active, key=lambda r: r.evaluation_days)
-                return newest.rule_id, cycle_id
-        except Exception:
-            logger.warning("Could not read rule_evaluation.json for trace target", exc_info=True)
 
     return None, cycle_id
 

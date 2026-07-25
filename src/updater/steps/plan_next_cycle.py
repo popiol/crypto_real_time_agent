@@ -111,7 +111,9 @@ def _diagnose_failure(
         f"Failed rule: {rule_score.rule_id}\n"
         f"Description: {rule_score.description}\n\n"
         f"Performance metrics:\n"
-        f"  avg_gain_pct: {rule_score.avg_gain_pct:.4f}\n"
+        f"  avg_gain_pct: {rule_score.avg_gain_pct:.4f}  (theoretical, from signal entry/exit prices)\n"
+        f"  avg_transaction_gain: {rule_score.avg_transaction_gain:.4f} "
+        f"over {rule_score.transaction_count} portfolio transaction(s)  (realized, net of fees)\n"
         f"  positive_rate: {rule_score.positive_rate:.3f}\n"
         f"  p25/p75: {rule_score.p25_gain_pct:.4f} / {rule_score.p75_gain_pct:.4f}\n"
         f"  min_gain_pct: {rule_score.min_gain_pct:.4f}\n"
@@ -169,13 +171,15 @@ def write_next_cycle_plan(
         )
         return plan
 
-    if rule_score.avg_gain_pct > config.cycle_success_threshold:
+    metric_value, metric_name = _performance_metric(rule_score)
+    if metric_value > config.cycle_success_threshold:
         plan = NextCyclePlan(action="continue", description=None)
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         logger.info(
-            "next_cycle_plan.json written: action=continue (rule %s avg_gain=%.4f > threshold)",
+            "next_cycle_plan.json written: action=continue (rule %s %s=%.4f > threshold)",
             last_rule_id,
-            rule_score.avg_gain_pct,
+            metric_name,
+            metric_value,
         )
         return plan
 
@@ -187,15 +191,27 @@ def write_next_cycle_plan(
         logger.exception("Failure diagnosis LLM call failed; defaulting to new_rule")
         plan = NextCyclePlan(
             action="new_rule",
-            description=f"Rule {last_rule_id} underperformed (avg_gain={rule_score.avg_gain_pct:.4f}); explore a new direction.",
+            description=f"Rule {last_rule_id} underperformed ({metric_name}={metric_value:.4f}); explore a new direction.",
         )
 
     plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     logger.info(
-        "next_cycle_plan.json written: action=%s (rule %s avg_gain=%.4f) — %s",
+        "next_cycle_plan.json written: action=%s (rule %s %s=%.4f) — %s",
         plan.action,
         last_rule_id,
-        rule_score.avg_gain_pct,
+        metric_name,
+        metric_value,
         plan.description,
     )
     return plan
+
+
+def _performance_metric(rule_score: RuleScore) -> tuple[float, str]:
+    """Return (value, metric_name) to judge a rule's performance by: recent
+    signal performance plus the portfolio's actual realized result, net of
+    fees. Same formula as portfolio.py's own trading gate. Degrades
+    gracefully when the portfolio hasn't closed any transactions for this
+    rule yet, since avg_transaction_gain is 0.0 by construction in that case.
+    """
+    combined = rule_score.recent_avg_gain_pct + rule_score.avg_transaction_gain
+    return combined, "recent_avg_gain_pct+avg_transaction_gain"

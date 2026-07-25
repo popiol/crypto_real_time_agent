@@ -208,7 +208,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | File / Directory | Contents |
 |---|---|
 | `data/state/signal_evaluation.json` | Aggregated per-rule signal statistics (win rate, avg gain, breakdown by pair and exit reason) |
-| `data/state/rule_evaluation.json` | Per-rule-version scoring, status, description, and enhanced metrics; descriptions are cached here across runs |
+| `data/state/rule_evaluation.json` | Accumulated per-rule-version scoring, description, and enhanced metrics — one entry per rule ever evaluated; descriptions are cached here across runs |
 | `data/state/indicator_set.json` | The current set of LLM-defined indicators: name, description, and generated Python code for each |
 | `data/state/train_set.json` | Accumulating samples of (indicator values from 24h ago, target: last 24h change) across all pairs and cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
@@ -267,8 +267,8 @@ Fills in signal outcomes from tier data. Computes metrics for the currently acti
 - `signal_trend` — `increasing`, `decreasing`, or `stable` (derived from weekly counts)
 - `avg_gain_by_volatility` — avg gain split into low/medium/high Bollinger Band Width buckets at signal time
 - `score` — composite score normalised to [0, 1]
-- `status` — `candidate`, `active`, or `deprecate`
-- `zero_signal_cycles`
+
+`rule_evaluation.json` accumulates one entry per rule ever evaluated: the active rule's entry is refreshed each cycle; every other rule_id's entry is carried over unchanged from whenever it was last active. There is no `status` field — whether to keep or replace the active rule is decided purely from `recent_avg_gain_pct + avg_transaction_gain` (§8.2 Step 9), not from a separate classification.
 
 #### Step 7 — Update train set
 *Inputs*: indicator values computed in step 2, target values (last 24h change per pair)  
@@ -297,27 +297,24 @@ Writes an immutable trace record:
 Traces are never edited. The `embedding` field is computed from the hypothesis text and stored alongside the trace for semantic retrieval in future cycles.
 
 #### Step 9 — Plan next cycle
-*Inputs*: `rule_evaluation.json` (metrics for the just-implemented rule), episodic trace (from step 8)  
+*Inputs*: `rule_evaluation.json` (score for the currently active rule), episodic trace (from step 8)  
 *Output*: `data/state/next_cycle_plan.json`
 
-Decision logic:
-- If the implemented rule's `avg_gain_pct` > 0.5%: `action: continue` — leave indicator set unchanged, generate next idea freely.
+Decision logic, evaluated fresh every cycle against whichever rule is currently active. The metric judged is `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3) — which degrades gracefully to just `recent_avg_gain_pct` while the portfolio hasn't closed any transactions for the rule yet, since `avg_transaction_gain` is `0.0` by construction until then:
+- If that metric > 0.5% (or the rule has too few signals to score yet): `action: continue` — leave the indicator set and the active rule alone.
 - Otherwise: LLM attempts to diagnose whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
   - If fixable: `action: fix` with a description of the specific change to attempt.
-  - If not fixable: `action: new_rule` — relation analysis in the next cycle starts fresh from the data.
+  - If not fixable: `action: new_rule` — relation analysis starts fresh from the data.
 
-The plan is the primary input to step 1 of the next cycle.
+If a cycle reads `action: continue` from the previous cycle, it re-runs this check immediately rather than trusting the stale verdict: if the rule is still performing, the cycle ends there; if it's no longer performing, the cycle proceeds straight into relation analysis → idea → implementation in the same run, rather than waiting a full cycle to act. Whenever a rule is actually replaced this cycle, the plan written for the *next* cycle is always `continue` for the new rule — the old rule's diagnosis is never carried over and misapplied to its replacement, since the new rule hasn't had any chance yet to earn a verdict of its own.
 
 ### 8.3 Rule lifecycle
 
 ```
-[idea generated] → [implemented / candidate] → [active] → [deprecated] → replaced
+[idea generated] → [implemented] → [continue | replaced]
 ```
 
-- **Idea**: generated in step 4 and implemented immediately in step 5 — ideas are not queued or persisted separately; there is no backlog.
-- **Candidate**: the rule's file exists and it is the current `ACTIVE_RULE` in `strategy.py`, but it has fewer signals than the minimum threshold to be scored.
-- **Active**: the rule has enough signal history and its composite score is above the deprecation threshold.
-- **Deprecated**: the rule's score fell below the deprecation threshold or its zero-signal-cycle limit was reached (§8.2 Step 6). Because exactly one rule is active at a time, a deprecated rule is not immediately unregistered — it keeps running and emitting signals until the following cycle's Step 5 implements its replacement (`next_cycle_plan.json` action `fix` or `new_rule`, §8.2 Step 9) and takes over `ACTIVE_RULE`. The deprecated rule's file remains under `strategy/rules/` for signal traceability.
+Ideas are generated in step 4 and implemented immediately in step 5 — they are not queued or persisted separately; there is no backlog. Once implemented, a rule stays active for as long as step 9 keeps deciding `continue`. There is no separate status classification or grace-period counter: replacement is driven purely by `avg_gain_pct` against `cycle_success_threshold`, re-checked every cycle. A replaced rule's file remains under `strategy/rules/` for signal traceability, but is no longer imported or executed once `ACTIVE_RULE` (§5.3) points elsewhere.
 
 ---
 
@@ -364,8 +361,10 @@ class RuleScore(BaseModel):
     description: str                    # cached from prior run or generated fresh
     signal_count: int
     evaluation_days: int
-    avg_gain_pct: float
+    avg_gain_pct: float                 # theoretical, from signal entry/exit prices
     recent_avg_gain_pct: float          # avg gain over signals in the last 48h of data
+    avg_transaction_gain: float         # realized, from the portfolio's closed transactions (net of fees)
+    transaction_count: int              # 0 means avg_transaction_gain is not yet meaningful
     min_gain_pct: float                 # worst single signal outcome
     p25_gain_pct: float
     p75_gain_pct: float
@@ -378,8 +377,6 @@ class RuleScore(BaseModel):
     signal_trend: Literal["increasing", "decreasing", "stable"]
     avg_gain_by_volatility: GainByVolatility
     score: float                        # composite, normalised to [0, 1]
-    status: Literal["candidate", "active", "deprecate"]
-    zero_signal_cycles: int
 
 class RuleEvaluation(BaseModel):
     rules: list[RuleScore]
@@ -481,7 +478,7 @@ Each data pull cycle executes in order:
 
 2. **Auto-close stale positions** — any position held for more than 24 hours (relative to the latest tick timestamp, not wall clock) gets a sell order placed at the current price. Any existing sell order for that position is cancelled first.
 
-3. **Place new orders** — finds the rule with the highest `recent_avg_gain_pct` in `rule_evaluation.json`. If it exceeds `portfolio_min_recent_gain`, signals from that rule in the current cycle are acted on:
+3. **Place new orders** — looks up the active rule (`last_implemented.json`) in `rule_evaluation.json`. There is exactly one active rule at a time (§5.3), so this never picks among candidates — it only checks whether that one rule's `recent_avg_gain_pct + avg_transaction_gain` exceeds `portfolio_min_recent_gain`. If it does, signals from that rule in the current cycle are acted on:
    - Buy signal → place a buy limit order at the signal price, spending `capital / 10`. Maximum 10 simultaneous open positions. Cash already committed to pending buy orders is deducted before checking available cash.
    - Sell signal → place a sell limit order at the signal price. If a sell order already exists for that position, it is cancelled and replaced.
 
@@ -492,7 +489,7 @@ Each data pull cycle executes in order:
 | Field | Default | Meaning |
 |---|---|---|
 | `portfolio_initial_capital` | `10000.0` | Starting cash in USD |
-| `portfolio_min_recent_gain` | `0.005` | Minimum `recent_avg_gain_pct` for a rule to trigger orders |
+| `portfolio_min_recent_gain` | `0.005` | Minimum `recent_avg_gain_pct + avg_transaction_gain` for the active rule to trigger orders |
 | `portfolio_fee` | `0.0025` | Exchange fee applied to both sides of each trade (0.25%) |
 
 ---

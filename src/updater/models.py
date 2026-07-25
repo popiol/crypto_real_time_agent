@@ -107,6 +107,7 @@ class RuleScore(BaseModel):
     avg_gain_pct: float
     recent_avg_gain_pct: float
     avg_transaction_gain: float
+    transaction_count: int = 0
     positive_rate: float
     avg_gain_24h: float
     max_gain_24h: float
@@ -119,8 +120,6 @@ class RuleScore(BaseModel):
     signal_trend: Literal["increasing", "decreasing", "stable"] = "stable"
     avg_gain_by_volatility: GainByVolatility = GainByVolatility()
     score: float
-    status: Literal["candidate", "active", "deprecate"]
-    zero_signal_cycles: int = 0
 
 
 class RuleEvaluation(BaseModel):

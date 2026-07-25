@@ -5,7 +5,10 @@ For the currently active rule:
     from the previous run's rule_evaluation.json).
   - Computes numeric scores from the signal ledger.
 
-Writes rule_evaluation.json (sole source of descriptions + scores).
+rule_evaluation.json accumulates one entry per rule ever evaluated: the
+active rule's entry is refreshed every cycle, and every other rule_id's
+entry is carried over unchanged (frozen at whatever it last scored, since
+it's no longer running and there's nothing new to compute).
 """
 
 from __future__ import annotations
@@ -51,18 +54,20 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     ledger_signals = storage.read_signals(config)
     transaction_gains = _load_transaction_gains(config)
 
-    # Load caches from the prior run's rule_evaluation.json
+    # Load caches and historical entries from the prior run's rule_evaluation.json
     prior_eval_path = paths.rule_evaluation(state_dir)
     desc_cache: dict[str, str] = _load_desc_cache(prior_eval_path)
-    zero_cycles_cache: dict[str, int] = _load_zero_cycles_cache(prior_eval_path)
+    prior_scores: list[RuleScore] = _load_prior_scores(prior_eval_path)
 
     parts = active_rule.__name__.split(".")
     rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
     description = _describe(rule_id, active_rule, desc_cache, config.llm_model)
     desc_cache[rule_id] = description
-    scores: list[RuleScore] = [
-        _score(rule_id, description, ledger_signals, zero_cycles_cache, transaction_gains, config)
-    ]
+    current_score = _score(rule_id, description, ledger_signals, transaction_gains, config)
+
+    # Refresh the active rule's entry; keep every other rule_id's last score.
+    scores = [s for s in prior_scores if s.rule_id != rule_id]
+    scores.append(current_score)
 
     try:
         summary_result = llm_structured(
@@ -83,10 +88,24 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
         RuleEvaluation(rules=scores, summary=summary).model_dump_json(indent=2),
         encoding="utf-8",
     )
-    logger.info("rule_evaluation.json written (%d rules)", len(scores))
+    logger.info(
+        "rule_evaluation.json written (%d rule(s) total, active=%s)", len(scores), rule_id
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _load_prior_scores(rule_eval_path: Path) -> list[RuleScore]:
+    """Return every rule's score from the previous rule_evaluation.json, if any."""
+    if not rule_eval_path.exists():
+        return []
+    try:
+        prior = RuleEvaluation.model_validate_json(rule_eval_path.read_text(encoding="utf-8"))
+        return prior.rules
+    except Exception:
+        logger.warning("Could not parse prior rule_evaluation.json for historical scores")
+        return []
 
 
 def _load_desc_cache(rule_eval_path: Path) -> dict[str, str]:
@@ -98,17 +117,6 @@ def _load_desc_cache(rule_eval_path: Path) -> dict[str, str]:
         return {r.rule_id: r.description for r in prior.rules if r.description}
     except Exception:
         logger.warning("Could not parse prior rule_evaluation.json for description cache")
-        return {}
-
-
-def _load_zero_cycles_cache(rule_eval_path: Path) -> dict[str, int]:
-    """Extract consecutive zero-signal cycle counts from the previous rule_evaluation.json."""
-    if not rule_eval_path.exists():
-        return {}
-    try:
-        prior = RuleEvaluation.model_validate_json(rule_eval_path.read_text(encoding="utf-8"))
-        return {r.rule_id: r.zero_signal_cycles for r in prior.rules}
-    except Exception:
         return {}
 
 
@@ -132,8 +140,14 @@ def _describe(rule_id: str, rule_module, cache: dict[str, str], model: str) -> s
         return f"No description available for {rule_id}."
 
 
-def _load_transaction_gains(config: AppConfig) -> dict[str, float]:
-    """Return average transaction gain_pct per rule_id from portfolio/transactions.json."""
+def _load_transaction_gains(config: AppConfig) -> dict[str, list[float]]:
+    """Return every closed transaction's gain_pct per rule_id from portfolio/transactions.json.
+
+    Returns raw gains (not just the average) so callers can distinguish "no
+    transactions yet" (rule_id absent / empty list) from "transactions
+    averaged to zero" — those mean very different things for deciding
+    whether a rule is performing.
+    """
     path = Path(config.data_dir) / "portfolio" / "transactions.json"
     if not path.exists():
         return {}
@@ -145,7 +159,7 @@ def _load_transaction_gains(config: AppConfig) -> dict[str, float]:
             gain = t.get("gain_pct")
             if rule_id and gain is not None:
                 by_rule.setdefault(rule_id, []).append(gain)
-        return {rule_id: sum(gains) / len(gains) for rule_id, gains in by_rule.items()}
+        return by_rule
     except Exception:
         logger.warning("Could not read transactions.json for avg_transaction_gain", exc_info=True)
         return {}
@@ -282,8 +296,7 @@ def _score(
     rule_id: str,
     description: str,
     ledger_signals: list[dict],
-    zero_cycles_cache: dict[str, int],
-    transaction_gains: dict[str, float],
+    transaction_gains: dict[str, list[float]],
     config: AppConfig,
 ) -> RuleScore:
     matching = [
@@ -291,15 +304,12 @@ def _score(
         if s.get("rule_id") == rule_id and s.get("outcome") is not None
     ]
     signal_count = len(matching)
+    tx_gains = transaction_gains.get(rule_id, [])
+    transaction_count = len(tx_gains)
+    avg_transaction_gain = sum(tx_gains) / transaction_count if tx_gains else 0.0
 
     if signal_count == 0:
-        zero_signal_cycles = zero_cycles_cache.get(rule_id, 0) + 1
-        status = "deprecate" if zero_signal_cycles >= config.rule_zero_signal_max_cycles else "candidate"
-        if status == "deprecate":
-            logger.warning(
-                "Rule %s has emitted 0 signals for %d consecutive cycles; marking for deprecation",
-                rule_id, zero_signal_cycles,
-            )
+        logger.info("Rule %s: 0 evaluated signals yet", rule_id)
         return RuleScore(
             rule_id=rule_id,
             description=description,
@@ -307,13 +317,12 @@ def _score(
             evaluation_days=0,
             avg_gain_pct=0.0,
             recent_avg_gain_pct=0.0,
-            avg_transaction_gain=transaction_gains.get(rule_id, 0.0),
+            avg_transaction_gain=avg_transaction_gain,
+            transaction_count=transaction_count,
             positive_rate=0.0,
             avg_gain_24h=0.0,
             max_gain_24h=0.0,
             score=0.0,
-            status=status,
-            zero_signal_cycles=zero_signal_cycles,
         )
 
     from datetime import datetime, timedelta, timezone
@@ -357,36 +366,12 @@ def _score(
     # Score: avg_gain_pct normalised to [0,1] where 0 = -10%, 0.5 = 0%, 1.0 = +10%
     score = round(max(0.0, min(1.0, (avg_gain_pct + 0.10) / 0.20)), 4)
 
-    # Deprecation: time-aware
-    # - candidate  : not enough signals yet
-    # - short eval : deprecate only on severe loss (< rule_early_deprecation_gain)
-    # - mature eval : deprecate on zero or below-zero avg gain
-    avg_transaction_gain = transaction_gains.get(rule_id, 0.0)
-    mature = evaluation_days >= config.rule_mature_days
-    if signal_count < config.rule_min_signals:
-        status = "candidate"
-        logger.info(
-            "Rule %s: candidate (%d/%d signals evaluated)",
-            rule_id, signal_count, config.rule_min_signals,
-        )
-    elif mature and avg_transaction_gain <= config.rule_mature_deprecation_gain:
-        status = "deprecate"
-        logger.warning(
-            "Rule %s: deprecate — mature (%dd) with avg_transaction_gain=%.4f <= %.4f",
-            rule_id, evaluation_days, avg_transaction_gain, config.rule_mature_deprecation_gain,
-        )
-    elif not mature and avg_gain_pct < config.rule_early_deprecation_gain:
-        status = "deprecate"
-        logger.warning(
-            "Rule %s: deprecate — early (%dd) with avg_gain_pct=%.4f < %.4f",
-            rule_id, evaluation_days, avg_gain_pct, config.rule_early_deprecation_gain,
-        )
-    else:
-        status = "active"
-        logger.info(
-            "Rule %s: active (score=%.4f, avg_gain_pct=%.4f, signal_count=%d)",
-            rule_id, score, avg_gain_pct, signal_count,
-        )
+    logger.info(
+        "Rule %s: score=%.4f avg_gain_pct=%.4f avg_transaction_gain=%.4f (%d transaction(s)) "
+        "signal_count=%d evaluation_days=%d",
+        rule_id, score, avg_gain_pct, avg_transaction_gain, transaction_count,
+        signal_count, evaluation_days,
+    )
 
     return RuleScore(
         rule_id=rule_id,
@@ -396,6 +381,7 @@ def _score(
         avg_gain_pct=avg_gain_pct,
         recent_avg_gain_pct=recent_avg_gain_pct,
         avg_transaction_gain=avg_transaction_gain,
+        transaction_count=transaction_count,
         positive_rate=positive_rate,
         avg_gain_24h=avg_gain_24h,
         max_gain_24h=max_gain_24h,
@@ -408,5 +394,4 @@ def _score(
         signal_trend=trend,
         avg_gain_by_volatility=gain_by_vol,
         score=score,
-        status=status,
     )
