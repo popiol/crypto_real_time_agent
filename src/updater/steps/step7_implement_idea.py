@@ -1,14 +1,16 @@
-"""Step 8 — Relation analysis, idea generation, rule implementation, and cycle planning.
+"""Step 7 — Relation analysis, idea generation, rule implementation, and cycle planning.
 
 Pipeline steps carried out here:
-  1. Unregister deprecated rule versions from strategy.py.
-  2. Read current next_cycle_plan.json (written by previous cycle).
-  3. Retrieve top-K episodic traces via cosine similarity to plan description.
-  4. Run LLM relation analysis (indicator values + train set + retrieved traces).
-  5. Generate exactly one RuleIdea from the analysis.
-  6. Generate and register rule code (new_rule → new folder/v1.py; fix → new version).
-  7. Write last_implemented.json with new rule_id and cycle_id.
-  8. Evaluate previous rule's performance and write next_cycle_plan.json for next cycle.
+  1. Read current next_cycle_plan.json (written by previous cycle) and last_implemented.json.
+  2. Retrieve top-K episodic traces via cosine similarity to plan description.
+  3. Run LLM relation analysis (indicator values + train set + retrieved traces).
+  4. Generate exactly one RuleIdea from the analysis (target_rule for a 'fix' idea is
+     always the current active rule, taken from last_implemented.json — never LLM-guessed).
+  5. Generate rule code (new_rule → new folder/v1.py; fix → new version alongside it).
+  6. Write last_implemented.json with the new rule_id and cycle_id. This alone makes it
+     the active rule (see strategy.py's get_active_rule) — no code file is edited.
+  7. Evaluate the previous rule's performance and write next_cycle_plan.json for the
+     next cycle.
 
 Rule folder layout:
   src/strategy/rules/<rule_name>/v1.py   ← initial version
@@ -17,14 +19,13 @@ Rule folder layout:
 Reads:
   data/state/next_cycle_plan.json   — current cycle's plan (from previous cycle)
   data/state/last_implemented.json  — previous cycle's rule_id (to evaluate performance)
-  data/state/rule_evaluation.json   — all rule scores
+  data/state/rule_evaluation.json   — the active rule's score
   data/state/indicator_values.json  — computed indicator values (from step 2)
   data/state/train_set.json         — accumulated train samples
   data/state/traces/                — episodic trace files
 
 Writes:
   src/strategy/rules/<rule_name>/v<N>.py
-  src/strategy/strategy.py
   data/state/last_implemented.json
   data/state/next_cycle_plan.json
 """
@@ -128,6 +129,11 @@ _RELATION_ANALYSIS_SYSTEM = (
     "Your analysis will directly inform the generation of a new trading rule."
 )
 
+_DATA_WINDOW_CONSTRAINT = (
+    "CONSTRAINT: data.warm holds at most 24 hourly candles; data.hot holds ~300 recent "
+    "ticks. Use data.cold for longer lookbacks."
+)
+
 _IDEA_GENERATION_SYSTEM = (
     "You are a quantitative trading strategist. "
     "Based on the relation analysis findings and the current cycle plan, "
@@ -135,7 +141,8 @@ _IDEA_GENERATION_SYSTEM = (
     "The idea must be directly grounded in the observed indicator patterns. "
     "For 'fix', target the named rule and describe specific improvements. "
     "For 'new_rule', propose a genuinely different approach. "
-    "Be precise: include thresholds, conditions, and expected market behaviour."
+    "Be precise: include thresholds, conditions, and expected market behaviour. "
+    + _DATA_WINDOW_CONSTRAINT
 )
 
 _FAILURE_DIAGNOSIS_SYSTEM = (
@@ -149,7 +156,8 @@ _FAILURE_DIAGNOSIS_SYSTEM = (
 _IMPLEMENT_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
     "Generate a complete, self-contained Python module that implements the described rule. "
-    "Return ONLY the raw Python source code — no explanation, no markdown, no code fences."
+    "Return ONLY the raw Python source code — no explanation, no markdown, no code fences. "
+    + _DATA_WINDOW_CONSTRAINT
 )
 
 _FIX_SYSTEM = (

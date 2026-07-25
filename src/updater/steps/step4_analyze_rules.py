@@ -1,6 +1,6 @@
-"""Step 2 — Analyze current rules.
+"""Step 4 — Analyze current rules.
 
-For each registered rule:
+For the currently active rule:
   - Generates a plain-language description via LLM (once per version; cached
     from the previous run's rule_evaluation.json).
   - Computes numeric scores from the signal ledger.
