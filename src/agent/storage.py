@@ -80,6 +80,17 @@ def latest_quote_time(config: AppConfig) -> datetime | None:
     return _parse_dt(row["latest"]) if row and row["latest"] else None
 
 
+def discover_pairs(config: AppConfig) -> list[str]:
+    """Return the configured pairs, or every pair with any tracked data if none are configured."""
+    if config.pairs:
+        return list(config.pairs)
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT DISTINCT pair FROM hot_ticks UNION SELECT DISTINCT pair FROM warm_candles"
+        ).fetchall()
+    return sorted(r["pair"] for r in rows)
+
+
 def write_ticks(
     ticks: list[Tick],
     config: AppConfig,

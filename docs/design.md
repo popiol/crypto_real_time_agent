@@ -79,13 +79,13 @@ All data is stored locally. The guiding principle is: the older the data, the mo
 |---|---|---|---|
 | **Hot** | Most recent N ticks (configurable, default last ~5 minutes) | Every poll | Full tick: timestamp, bid, ask, last price, spread |
 | **Warm** | Last 24 hours | 1 entry per hour | Hourly OHLC of last price, average spread |
-| **Cold** | Older than 24 hours | 1 entry per statistical window | Min price, max price, avg price, avg daily spread — kept for: last 7 days, last 30 days, last 90 days, last 365 days, all-time |
+| **Cold** | Older than 24 hours | 1 entry per calendar month | Min price, max price, avg price, avg daily spread, candle count, last candle hour — aggregated, not a time series |
 
 ### 4.2 Downsampling
 
 A background job runs every hour to:
-1. Aggregate hot-tier ticks older than 24 hours into the warm tier.
-2. Recompute all cold-tier statistical windows (7d, 30d, 90d, 365d, all-time) from the warm tier and any previously stored cold-tier data.
+1. Aggregate hot-tier ticks older than 24 hours into the warm tier (capped at the last 24 hourly candles).
+2. Recompute cold-tier monthly aggregates from any warm-tier candles that have rolled off, merging into the existing per-month row.
 
 ### 4.3 File format
 
@@ -112,7 +112,7 @@ data/
 The strategy is a single Python module `strategy/strategy.py` that exposes one function:
 
 ```python
-def find_signals(data: MarketData) -> list[BuySignal | SellSignal]:
+def find_signals(data: MarketData, config: AppConfig) -> list[BuySignal | SellSignal]:
     ...
 ```
 
@@ -132,7 +132,9 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     ...
 ```
 
-Exactly one rule is active at a time. `strategy.py` holds a single `ACTIVE_RULE` import, and `find_signals()` calls only that module's `signal()` function — this matches the Strategy Updater's one-hypothesis-per-cycle learning loop (§8): there is always exactly one hypothesis under test, never a portfolio of concurrently running rules. Rules are purely functional — they read data and return signals; they have no side effects.
+Exactly one rule is active at a time. The active rule is *state*, not code: `find_signals()` reads `data/state/last_implemented.json` (§8.1) on every call and dynamically imports whichever rule module it names, then calls that module's `signal()` function. The Strategy Updater never edits `strategy.py` itself — this matches the Strategy Updater's one-hypothesis-per-cycle learning loop (§8): there is always exactly one hypothesis under test, never a portfolio of concurrently running rules. Rules are purely functional — they read data and return signals; they have no side effects.
+
+**Data tier limits.** Every rule receives `data.hot` (≤~300 recent ticks, ~5 minutes), `data.warm` (at most 24 hourly OHLC candles — never more), and `data.cold` (one aggregate row per calendar month: min/max/avg price, avg daily spread, candle count — not a time series, §4.1). An indicator whose lookback exceeds 24 hourly candles cannot be computed from `data.warm`, and `data.cold` cannot substitute for it since it holds no individual hourly/daily closes — only coarse monthly aggregates. A rule that ignores this will pass syntax/type validation but silently return `[]` forever against real data (§8.2 Step 5 prompts the generating LLM with this constraint explicitly, including during fix attempts).
 
 Directory layout:
 
@@ -149,7 +151,7 @@ strategy/
 
 ### 5.3 Rule versioning
 
-Each rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When the Strategy Updater implements a new rule idea (§8.2 Step 5), it replaces `ACTIVE_RULE` in `strategy.py` with the new version — a `fix` idea's version file is added alongside the previous version of the same rule, a `new_rule` idea's file goes in a new folder. Either way, the new version immediately becomes the sole active rule. The previous version's file is kept on disk under `strategy/rules/` for signal traceability but is no longer imported or executed once replaced.
+Each rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When the Strategy Updater implements a new rule idea (§8.2 Step 5), it writes the new `rule_id` to `data/state/last_implemented.json` — a `fix` idea's version file is added alongside the previous version of the same rule, a `new_rule` idea's file goes in a new folder. Either way, the new version immediately becomes the sole active rule, since `find_signals()` re-reads `last_implemented.json` on every call. The previous version's file is kept on disk under `strategy/rules/` for signal traceability but is no longer imported or executed once replaced.
 
 ---
 
@@ -235,7 +237,7 @@ All steps that involve reasoning use the LLM (see section 9). Steps run sequenti
 Skipped if `next_cycle_plan.json` has `action: continue` (previous cycle was successful — gain > 0.5%). Otherwise, the LLM reviews the current indicator set in light of the plan and may add, remove, or modify indicators. For each change, the LLM generates a Python function that computes the indicator from `PairData` (hot/warm/cold tiers). The updated set is persisted.
 
 #### Step 2 — Compute indicators
-*Inputs*: `data/state/indicator_set.json`, hot/warm/cold tier data for all pairs (snapshot from 24h ago)  
+*Inputs*: `data/state/indicator_set.json`, warm/cold tier data for pairs with a signal whose outcome is still unresolved  
 *Output*: in-memory indicator values per pair (consumed immediately by step 3)
 
 Executes each indicator function against the tier snapshot. Results are a flat dict of `{indicator_name: value}` per pair.

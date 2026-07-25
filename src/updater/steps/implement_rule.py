@@ -51,8 +51,24 @@ RULES_DIR = Path("src/strategy/rules")
 _MAX_FIX_ATTEMPTS = 10
 
 DATA_WINDOW_CONSTRAINT = (
-    "CONSTRAINT: data.warm holds at most 24 hourly candles; data.hot holds ~300 recent "
-    "ticks. Use data.cold for longer lookbacks."
+    "DATA TIER LIMITS (hard constraints — a rule that violates these will never "
+    "produce a signal against real data, even though it will look syntactically valid):\n"
+    "- data.hot: the last ~300 raw ticks (~5 minutes of history at 1 poll/sec). "
+    "Tick-level last_price/bid/ask/spread.\n"
+    "- data.warm: the last 24 hourly OHLC candles, AT MOST — never more than 24 entries. "
+    "Any indicator whose lookback exceeds 24 hourly candles (e.g. SMA(30), SMA(50), or "
+    "any period > 23) CANNOT be computed from data.warm; len(data.warm) will never reach "
+    "that many entries, so the rule will always fall through its own 'insufficient data' "
+    "check and return [].\n"
+    "- data.cold: ONE ROW PER CALENDAR MONTH, aggregates only (min_price, max_price, "
+    "avg_price, avg_daily_spread, candle_count, last_candle_hour) — it is NOT an hourly "
+    "or daily price series. It cannot be used to extend a warm-tier indicator's lookback "
+    "(there is no way to reconstruct individual hourly/daily closes from it). Only use "
+    "data.cold for coarse, monthly-resolution comparisons (e.g. current price vs. this "
+    "month's avg_price/min_price/max_price).\n"
+    "Every indicator lookback period MUST fit within data.warm's 24-candle limit (or use "
+    "data.hot/data.cold directly). Do not design an indicator assuming a longer hourly or "
+    "daily history exists anywhere — it does not."
 )
 
 _IMPLEMENT_SYSTEM = (
@@ -66,7 +82,8 @@ _FIX_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
     "You will be given a partial or broken implementation of a trading rule. "
     "Return the changes needed to complete it into a fully working module. "
-    "Do not rewrite parts that are already correct."
+    "Do not rewrite parts that are already correct.\n\n"
+    + DATA_WINDOW_CONSTRAINT
 )
 
 _REFERENCE_RULE = """\
