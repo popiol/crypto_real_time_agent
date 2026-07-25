@@ -770,10 +770,11 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
             logger.info("Code passed validation after %d fix attempt(s)", attempt)
             break
         logger.warning(
-            "Validation error (attempt %d/%d): %s",
+            "Validation error (attempt %d/%d): %s\nCode:\n%s",
             attempt + 1,
             _MAX_FIX_ATTEMPTS,
             error,
+            code,
         )
         code = _fix_with_diff(code, idea, llm)
         logger.debug(
@@ -782,6 +783,12 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
     else:
         error = _check_syntax(code)
         if error is not None:
+            logger.error(
+                "Code still failing after %d fix attempts: %s\nCode:\n%s",
+                _MAX_FIX_ATTEMPTS,
+                error,
+                code,
+            )
             raise _ImplementationFailed(
                 f"Code still failing after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
             )

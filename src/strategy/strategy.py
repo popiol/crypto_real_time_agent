@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 
-import src.strategy.rules.HighVolatilityDipBuy.v2 as ACTIVE_RULE
+import src.strategy.rules.rule_49_relaxed_mean_reversion_dip_buy.v1 as ACTIVE_RULE
 from src.agent.models import BuySignal, MarketData, SellSignal
 
 Signal = BuySignal | SellSignal

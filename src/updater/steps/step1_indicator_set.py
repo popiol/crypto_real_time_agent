@@ -263,16 +263,24 @@ def _generate_code(spec: _IndicatorSpec, model: str) -> str:
             )
             return code
         logger.warning(
-            "Indicator '%s' validation error (attempt %d/%d): %s",
+            "Indicator '%s' validation error (attempt %d/%d): %s\nCode:\n%s",
             spec.name,
             attempt + 1,
             _MAX_FIX_ATTEMPTS,
             error,
+            code,
         )
         code = _fix_with_diff(code, base_context, llm)
 
     error = _check_syntax(code)
     if error is not None:
+        logger.error(
+            "Indicator '%s' still invalid after %d fix attempts: %s\nCode:\n%s",
+            spec.name,
+            _MAX_FIX_ATTEMPTS,
+            error,
+            code,
+        )
         raise ValueError(
             f"Indicator '{spec.name}' still invalid after {_MAX_FIX_ATTEMPTS} fix attempts: {error}"
         )
