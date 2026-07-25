@@ -326,7 +326,17 @@ def reset_for_backtest(config: AppConfig) -> None:
 
 
 def read_signals(config: AppConfig) -> list[dict]:
-    """Return all signal records with outcome nested as a dict (or None if unresolved)."""
+    """Return all signal records with outcome nested as a dict (or None if unresolved).
+
+    gain_pct (the final outcome — sell-match or 20-day timeout) and
+    gain_24h_pct (a fixed 24h-later read, resolved independently and much
+    sooner — see evaluator.py) are populated on different timelines.
+    `outcome` is exposed as soon as *either* is available, so callers that
+    only need "is there something to judge yet" aren't stuck waiting on
+    gain_pct alone. Callers that specifically need the final settled result
+    should check `outcome.get("gain_pct") is not None`, since gain_pct may
+    legitimately be absent from an outcome that only has gain_24h_pct so far.
+    """
     with open_db(config.data_dir) as con:
         rows = con.execute(
             "SELECT * FROM signals ORDER BY emitted_at ASC"
@@ -336,13 +346,13 @@ def read_signals(config: AppConfig) -> list[dict]:
 
 def _signal_row_to_dict(row) -> dict:
     outcome = None
-    if row["gain_pct"] is not None:
-        outcome = {
-            "evaluated_at": row["evaluated_at"],
-            "exit_price": row["exit_price"],
-            "exit_reason": row["exit_reason"],
-            "gain_pct": row["gain_pct"],
-        }
+    if row["gain_pct"] is not None or row["gain_24h_pct"] is not None:
+        outcome = {}
+        if row["gain_pct"] is not None:
+            outcome["evaluated_at"] = row["evaluated_at"]
+            outcome["exit_price"] = row["exit_price"]
+            outcome["exit_reason"] = row["exit_reason"]
+            outcome["gain_pct"] = row["gain_pct"]
         if row["gain_24h_pct"] is not None:
             outcome["gain_24h_pct"] = row["gain_24h_pct"]
             outcome["max_gain_24h_pct"] = row["max_gain_24h_pct"]

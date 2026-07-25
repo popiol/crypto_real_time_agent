@@ -171,31 +171,40 @@ Every buy signal emitted by the strategy is written to a persistent ledger (`dat
 }
 ```
 
-### 6.2 Outcome record (filled in 24 hours later)
+### 6.2 Outcome record
+
+The two outcome fields resolve independently, on very different timelines, and `outcome` is exposed by `storage.read_signals()` as soon as *either* is present:
 
 ```json
 {
   "outcome": {
-    "evaluated_at": "2026-06-16T10:32:00Z",
-    "price_24h": 69100.00,
-    "max_price_24h": 70250.00,
     "gain_24h_pct": 2.49,
-    "max_gain_24h_pct": 4.20
+    "max_gain_24h_pct": 4.20,
+    "evaluated_at": "2026-06-16T10:32:00Z",
+    "exit_price": 69100.00,
+    "exit_reason": "sell_signal",
+    "gain_pct": 2.61
   }
 }
 ```
 
+- `gain_24h_pct` / `max_gain_24h_pct` — a fixed 24h-later price read, resolved once a signal is 24-48h old regardless of whether a real exit has happened. Available for the vast majority of evaluated signals within roughly a day.
+- `evaluated_at` / `exit_price` / `exit_reason` / `gain_pct` — the final settled outcome: either a matching opposite-direction signal for the same pair, or a 20-day timeout (§7). Only present once one of those actually happens.
+
+A signal can have `gain_24h_pct` set and `gain_pct` absent for a long time — that's the normal case, not a partial/broken record. Code that needs "is there anything to judge yet" should check `outcome is not None`; code that specifically needs the final settled result should check `outcome.get("gain_pct") is not None`.
+
 `gain_24h_pct` = `(price_24h - price_at_signal) / price_at_signal * 100`
 `max_gain_24h_pct` = `(max_price_24h - price_at_signal) / price_at_signal * 100`
+`gain_pct` = `(exit_price - price_at_signal) / price_at_signal * 100`
 
 ---
 
 ## 7. Signal Evaluator
 
-A background job runs every hour and:
-1. Queries the ledger for signals emitted more than 24 hours ago with `outcome = null`.
-2. Retrieves the warm/cold tier data for the relevant pair to reconstruct prices in the 24-hour window after the signal.
-3. Computes `gain_24h_pct` and `max_gain_24h_pct` and writes the outcome back to the ledger.
+A background job runs every hour and resolves two independent outcome fields per pending buy signal:
+
+1. **24h read** (`gain_24h_pct`, `max_gain_24h_pct`): once a signal is 24-48h old, reconstructs prices from the warm tier over that window and writes both fields. This does not require a sell signal or any exit to have happened — it's a fixed snapshot.
+2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or by a 20-day timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since rules can be replaced roughly daily (§8.2 Step 9), most signals never reach this — the 24h read is what the rest of the system (§8.2 Step 6) actually relies on in practice.
 
 ---
 
@@ -258,8 +267,9 @@ Generates real, executable Python code from the idea produced in step 4. Exactly
 *Output*: `rule_evaluation.json` (updated — one entry, for the current `ACTIVE_RULE`), `signal_evaluation.json`
 
 Fills in signal outcomes from tier data. Computes metrics for the currently active rule:
-- `signal_count`, `evaluation_days`
-- `avg_gain_pct`, `recent_avg_gain_pct` (last 48h of data)
+- `signal_count` — signals with *any* outcome (`gain_24h_pct` or the final `gain_pct`, §6.2); `emitted_signal_count` — all signals emitted regardless of resolution. Since the 24h read resolves within about a day while the final outcome can take up to 20, `signal_count` tracks the 24h read in practice — §8.2 Step 9 relies on the gap between it and `emitted_signal_count` to tell "hasn't resolved yet" apart from "never fires."
+- `evaluation_days`
+- `avg_gain_pct`, `recent_avg_gain_pct` (last 48h of data) — per signal, the final `gain_pct` if it has resolved, else `gain_24h_pct`
 - `min_gain_pct` (worst result), `p25_gain_pct`, `p75_gain_pct`
 - `positive_rate`, `avg_gain_24h`, `max_gain_24h`
 - `longest_win_streak`, `longest_loss_streak`
@@ -300,11 +310,14 @@ Traces are never edited. The `embedding` field is computed from the hypothesis t
 *Inputs*: `rule_evaluation.json` (score for the currently active rule), episodic trace (from step 8)  
 *Output*: `data/state/next_cycle_plan.json`
 
-Decision logic, evaluated fresh every cycle against whichever rule is currently active. The metric judged depends on `transaction_count`, the number of transactions the portfolio has actually closed for the rule:
-- Below 10 transactions: `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3). With few real trades, blending in the signal-theoretical figure gives a less noisy read; it degrades gracefully to just `recent_avg_gain_pct` while `transaction_count` is `0`, since `avg_transaction_gain` is `0.0` by construction until then.
-- At 10 or more: `avg_transaction_gain` alone. With enough real trades to be a trustworthy sample, the realized result is trusted exclusively — a rule with a rosy theoretical `recent_avg_gain_pct` but real losses no longer gets a pass.
-- If that metric > 0.5% (or the rule has too few signals to score yet): `action: continue` — leave the indicator set and the active rule alone.
-- Otherwise: LLM attempts to diagnose whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
+Decision logic, evaluated fresh every cycle against whichever rule is currently active:
+- If `rule_evaluation.json` has no entry for the rule yet, or the rule has zero *evaluated* signals (`signal_count == 0`) but is actively emitting them (`emitted_signal_count > 0`): `action: continue` — nothing to judge yet, since a signal can only resolve via a matching opposite-direction signal or a 20-day timeout (§7), and treating an unresolved rule as 0% gain would replace every rule before it ever gets a fair look.
+- If the rule genuinely never emits any signal at all (`signal_count == 0` and `emitted_signal_count == 0`): falls through to the check below like any other rule — this is a real failure (e.g. an indicator window exceeding the 24-candle warm-tier cap, §5.2), not a timing artifact, and should be diagnosed and replaced.
+- Otherwise, the metric judged depends on `transaction_count`, the number of transactions the portfolio has actually closed for the rule:
+  - Below 10 transactions: `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3). With few real trades, blending in the signal-theoretical figure gives a less noisy read; it degrades gracefully to just `recent_avg_gain_pct` while `transaction_count` is `0`, since `avg_transaction_gain` is `0.0` by construction until then.
+  - At 10 or more: `avg_transaction_gain` alone. With enough real trades to be a trustworthy sample, the realized result is trusted exclusively — a rule with a rosy theoretical `recent_avg_gain_pct` but real losses no longer gets a pass.
+  - If that metric > 0.5%: `action: continue` — leave the indicator set and the active rule alone.
+  - Otherwise: LLM attempts to diagnose whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
   - If fixable: `action: fix` with a description of the specific change to attempt.
   - If not fixable: `action: new_rule` — relation analysis starts fresh from the data.
 
@@ -361,10 +374,11 @@ class GainByVolatility(BaseModel):
 class RuleScore(BaseModel):
     rule_id: str                        # includes version, e.g. "rule_01_spread_compression_v2"
     description: str                    # cached from prior run or generated fresh
-    signal_count: int
+    signal_count: int                   # signals with any outcome (24h read or final), §6.2
+    emitted_signal_count: int           # all emitted signals, regardless of resolution
     evaluation_days: int
-    avg_gain_pct: float                 # theoretical, from signal entry/exit prices
-    recent_avg_gain_pct: float          # avg gain over signals in the last 48h of data
+    avg_gain_pct: float                 # theoretical: per signal, final gain_pct if resolved else gain_24h_pct
+    recent_avg_gain_pct: float          # avg_gain_pct over signals in the last 48h of data
     avg_transaction_gain: float         # realized, from the portfolio's closed transactions (net of fees)
     transaction_count: int              # 0 means avg_transaction_gain is not yet meaningful
     min_gain_pct: float                 # worst single signal outcome

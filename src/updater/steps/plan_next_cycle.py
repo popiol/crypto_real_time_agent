@@ -167,12 +167,31 @@ def write_next_cycle_plan(
 
     rule_score = get_rule_score(state_dir, last_rule_id)
     if rule_score is None:
-        # Rule not yet in evaluation (too new) — treat as continue
+        # No entry yet — nothing to judge.
         plan = NextCyclePlan(action="continue", description=None)
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         logger.info(
             "next_cycle_plan.json written: action=continue (rule %s not yet evaluated)",
             last_rule_id,
+        )
+        return plan
+
+    if rule_score.signal_count == 0 and rule_score.emitted_signal_count > 0:
+        # The rule is actively firing but none of its signals have resolved
+        # yet — a signal can only resolve via a matching opposite-direction
+        # signal or a 20-day timeout (see evaluator.py), so this is expected
+        # for a while regardless of how well the rule is actually
+        # performing. Treating unresolved as 0% gain would kill every rule
+        # before it ever gets a fair look. If it genuinely never emits any
+        # signal at all (emitted_signal_count == 0), fall through instead —
+        # that's a real failure, not a timing artifact.
+        plan = NextCyclePlan(action="continue", description=None)
+        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        logger.info(
+            "next_cycle_plan.json written: action=continue (rule %s has %d emitted "
+            "signal(s), none evaluated yet)",
+            last_rule_id,
+            rule_score.emitted_signal_count,
         )
         return plan
 

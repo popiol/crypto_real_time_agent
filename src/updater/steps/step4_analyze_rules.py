@@ -200,6 +200,17 @@ def _signal_trend(weekly: list[int]) -> str:
     return "stable"
 
 
+def _gain(s: dict) -> float | None:
+    """Return a signal's gain: the final settled gain_pct if it has resolved
+    (sell-match or 20-day timeout), else the much-faster-resolving
+    gain_24h_pct (see storage.read_signals). Prefer the final result once
+    it exists; it reflects the rule's real exit, not a fixed 24h snapshot.
+    """
+    outcome = s.get("outcome") or {}
+    gain_pct = outcome.get("gain_pct")
+    return gain_pct if gain_pct is not None else outcome.get("gain_24h_pct")
+
+
 def _bbw(closes: list[float], period: int = 20) -> float | None:
     """Bollinger Band Width = 4 * std(closes[-period:]) / sma(closes[-period:])."""
     if len(closes) < period:
@@ -228,7 +239,7 @@ def _gain_by_volatility(signals: list[dict], config: AppConfig) -> GainByVolatil
     for s in signals:
         pair = s.get("pair")
         ts = s.get("emitted_at")
-        gain = s.get("outcome", {}).get("gain_pct")
+        gain = _gain(s)
         if not pair or not ts or gain is None:
             continue
         signal_time = _parse(ts)
@@ -299,21 +310,24 @@ def _score(
     transaction_gains: dict[str, list[float]],
     config: AppConfig,
 ) -> RuleScore:
-    matching = [
-        s for s in ledger_signals
-        if s.get("rule_id") == rule_id and s.get("outcome") is not None
-    ]
+    emitted = [s for s in ledger_signals if s.get("rule_id") == rule_id]
+    emitted_signal_count = len(emitted)
+    matching = [s for s in emitted if s.get("outcome") is not None]
     signal_count = len(matching)
     tx_gains = transaction_gains.get(rule_id, [])
     transaction_count = len(tx_gains)
     avg_transaction_gain = sum(tx_gains) / transaction_count if tx_gains else 0.0
 
     if signal_count == 0:
-        logger.info("Rule %s: 0 evaluated signals yet", rule_id)
+        logger.info(
+            "Rule %s: 0 evaluated signals yet (%d emitted, pending evaluation)",
+            rule_id, emitted_signal_count,
+        )
         return RuleScore(
             rule_id=rule_id,
             description=description,
             signal_count=0,
+            emitted_signal_count=emitted_signal_count,
             evaluation_days=0,
             avg_gain_pct=0.0,
             recent_avg_gain_pct=0.0,
@@ -333,7 +347,7 @@ def _score(
         dt = datetime.fromisoformat(str(ts))
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
 
-    gains_pct = [s["outcome"]["gain_pct"] for s in matching]
+    gains_pct = [g for s in matching if (g := _gain(s)) is not None]
     avg_gain_pct = sum(gains_pct) / len(gains_pct)
     positive_rate = sum(1 for g in gains_pct if g > 0) / len(gains_pct)
     min_gain_pct = min(gains_pct)
@@ -350,7 +364,7 @@ def _score(
         s for s in matching
         if cutoff_48h and s.get("emitted_at") and _parse(s["emitted_at"]) >= cutoff_48h
     ]
-    recent_gains = [s["outcome"]["gain_pct"] for s in recent]
+    recent_gains = [g for s in recent if (g := _gain(s)) is not None]
     recent_avg_gain_pct = sum(recent_gains) / len(recent_gains) if recent_gains else 0.0
 
     with_24h = [s["outcome"] for s in matching if "gain_24h_pct" in s["outcome"]]
@@ -377,6 +391,7 @@ def _score(
         rule_id=rule_id,
         description=description,
         signal_count=signal_count,
+        emitted_signal_count=emitted_signal_count,
         evaluation_days=evaluation_days,
         avg_gain_pct=avg_gain_pct,
         recent_avg_gain_pct=recent_avg_gain_pct,

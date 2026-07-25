@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     evaluated = [
         r for r in storage.read_signals(config)
-        if r.get("outcome") is not None and r.get("direction", "buy") == "buy"
+        if (r.get("outcome") or {}).get("gain_pct") is not None
+        and r.get("direction", "buy") == "buy"
     ]
     if not evaluated:
         logger.info("No evaluated signals yet; skipping step 3")

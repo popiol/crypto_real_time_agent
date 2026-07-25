@@ -103,6 +103,7 @@ class RuleScore(BaseModel):
     rule_id: str
     description: str
     signal_count: int
+    emitted_signal_count: int = 0
     evaluation_days: int
     avg_gain_pct: float
     recent_avg_gain_pct: float
