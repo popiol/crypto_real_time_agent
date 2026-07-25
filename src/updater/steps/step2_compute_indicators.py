@@ -24,16 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
+    values_path = state_dir / "indicator_values.json"
     set_path = state_dir / "indicator_set.json"
     if not set_path.exists():
         logger.info("indicator_set.json not found; skipping indicator computation")
-        (state_dir / "indicator_values.json").write_text("{}", encoding="utf-8")
+        values_path.write_text("{}", encoding="utf-8")
         return
 
     indicator_set = IndicatorSet.model_validate_json(set_path.read_text(encoding="utf-8"))
     if not indicator_set.indicators:
         logger.info("Indicator set is empty; skipping computation")
-        (state_dir / "indicator_values.json").write_text("{}", encoding="utf-8")
+        values_path.write_text("{}", encoding="utf-8")
         return
 
     # Identify pairs that have signals with unresolved outcomes (emitted in the past 24h)
@@ -42,7 +43,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     if not pairs:
         logger.info("No recent signals found; skipping indicator computation")
-        (state_dir / "indicator_values.json").write_text("{}", encoding="utf-8")
+        values_path.write_text("{}", encoding="utf-8")
         return
 
     results: dict[str, dict[str, float | None]] = {}
@@ -54,9 +55,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         )
         results[pair] = _compute_for_pair(indicator_set, pair_data)
 
-    (state_dir / "indicator_values.json").write_text(
-        json.dumps(results, indent=2), encoding="utf-8"
-    )
+    values_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
     logger.info(
         "indicator_values.json written: %d pair(s), %d indicator(s) each",
         len(results),
