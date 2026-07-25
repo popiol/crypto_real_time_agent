@@ -91,12 +91,12 @@ RSI_PERIOD = 14
 BB_PERIOD = 20
 BB_K = 2.0 # Standard deviation multiplier for Bollinger Bands
 
-# Rule-specific constants
-RULE_ID = "RSI_BB_MR_Thresh_Adjust" # Updated Rule ID
-RSI_BUY_THRESHOLD = 40              # Updated from 35 to 40
-RSI_SELL_THRESHOLD = 60             # Updated from 65 to 60
-BB_PERCENT_B_BUY_THRESHOLD = 0.2    # Updated from 0.5 to 0.2
-BB_PERCENT_B_SELL_THRESHOLD = 0.8   # Updated from 0.5 to 0.8
+# Rule-specific constants based on the idea "RSI_BB_Relaxed_Thresholds_V1"
+RULE_ID = "RSI_BB_Relaxed_Thresholds_V1"
+RSI_BUY_THRESHOLD = 35              # Relaxed from 30 to 35
+RSI_SELL_THRESHOLD = 65             # Relaxed from 70 to 65
+BB_PERCENT_B_BUY_THRESHOLD = 0.2    # Unchanged, as per idea's description
+BB_PERCENT_B_SELL_THRESHOLD = 0.8   # Unchanged, as per idea's description
 
 
 def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
@@ -186,13 +186,13 @@ def _calculate_bollinger_bands_percent_b(prices: np.ndarray, period: int, k: flo
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     """
-    Implements the 'Adjusted RSI & Bollinger Bands %B Mean Reversion' trading rule.
+    Implements the 'RSI_BB_Relaxed_Thresholds_V1' trading rule.
 
-    This rule generates a buy signal when the 14-period Relative Strength Index (RSI) is below 40
+    This rule generates a buy signal when the 14-period Relative Strength Index (RSI) is below 35
     AND the 20-period, 2-standard-deviation Bollinger Bands %B is below 0.2.
-    A sell signal is generated when RSI is above 60 AND Bollinger Bands %B is above 0.8.
-    This aims to increase signal generation by using less stringent combined thresholds for
-    mean reversion opportunities.
+    A sell signal is generated when RSI is above 65 AND Bollinger Bands %B is above 0.8.
+    This aims to increase signal generation by relaxing RSI thresholds while maintaining
+    Bollinger Bands %B conditions for mean reversion opportunities.
     """
     signals: list[BuySignal | SellSignal] = []
 
@@ -216,9 +216,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         bb_percent_b_series = _calculate_bollinger_bands_percent_b(prices, BB_PERIOD, BB_K)
 
         # Ensure we have at least one valid value for each indicator
-        # Note: The length of RSI series is len(prices) - period, and BB%B is len(prices) - period + 1.
-        # We need the latest value from both, so we need prices to be long enough for both to produce at least one value.
-        # The required_data_points check already ensures this.
+        # The length of RSI series is len(prices) - period, and BB%B is len(prices) - period + 1.
+        # We need the latest value from both. The required_data_points check already ensures this.
         if len(rsi_series) == 0 or len(bb_percent_b_series) == 0:
             continue
 
@@ -247,7 +246,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             # No current price available from hot or warm data. Cannot generate a relevant signal.
             continue
         
-        # Apply the rule's conditions for buy signal: RSI < 40 AND BB%B < 0.2
+        # Apply the rule's conditions for buy signal: RSI < 35 AND BB%B < 0.2
         if (last_rsi < RSI_BUY_THRESHOLD) and (last_bb_percent_b < BB_PERCENT_B_BUY_THRESHOLD):
             signals.append(BuySignal(
                 pair=pair,
@@ -255,7 +254,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
                 price=current_price,
                 rule_id=RULE_ID
             ))
-        # Apply the rule's conditions for sell signal: RSI > 60 AND BB%B > 0.8
+        # Apply the rule's conditions for sell signal: RSI > 65 AND BB%B > 0.8
         elif (last_rsi > RSI_SELL_THRESHOLD) and (last_bb_percent_b > BB_PERCENT_B_SELL_THRESHOLD):
             signals.append(SellSignal(
                 pair=pair,
