@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-# --- Data Models (Copied from the provided context) ---
+# --- Data Models ---
 class Tick(BaseModel):
     """A single poll snapshot for one currency pair."""
 
@@ -90,9 +90,9 @@ MarketData = dict[str, PairData]
 RSI_PERIOD = 14
 BB_PERIOD = 20
 BB_K = 2.0 # Standard deviation multiplier for Bollinger Bands
-SMA_PERIOD = 20 # Period for Simple Moving Average (though not directly used in final conditions)
+SMA_PERIOD = 20 # Period for Simple Moving Average, used within BB calculation
 
-RULE_ID = "RSI-BB-Relax-V2"
+RULE_ID = "MR_Relaxed_RSI_BB"
 
 
 def _calculate_rsi(prices: np.ndarray, period: int) -> np.ndarray:
@@ -182,18 +182,12 @@ def _calculate_bollinger_bands_percent_b(prices: np.ndarray, period: int, k: flo
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     """
-    Implements the 'RSI-BB-Relax-V2' trading rule.
+    Implements the 'Relaxed Mean-Reversion Entry with OR Conditions' trading rule.
 
-    This rule adjusts the Relative Strength Index (RSI) thresholds for the
-    existing Bollinger Bands (%B) mean reversion rule.
-
-    A buy signal is generated when:
-    - Bollinger Bands %B is below 0.2
-    - RSI is below 40
-
-    A sell signal is generated when:
-    - Bollinger Bands %B is above 0.8
-    - RSI is above 60
+    This rule generates a buy signal if either the Relative Strength Index (RSI)
+    falls below 20 OR the Bollinger Bands %B falls below 0.
+    A sell signal is generated if either the RSI rises above 80 OR the Bollinger Bands %B
+    risess above 1. This aims to capture extreme oversold or overbought conditions more frequently.
     """
     signals: list[BuySignal | SellSignal] = []
 
@@ -201,10 +195,11 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         warm_data = pair_data.warm
 
         # Determine the maximum number of candles required for all indicators
-        # RSI needs PERIOD + 1. BB/SMA needs PERIOD.
-        required_data_points = max(RSI_PERIOD + 1, BB_PERIOD, SMA_PERIOD)
+        # RSI needs period + 1. BB needs period.
+        required_data_points = max(RSI_PERIOD + 1, BB_PERIOD)
 
         if len(warm_data) < required_data_points:
+            # Not enough data to calculate indicators reliably
             continue
 
         # Extract 'close' prices from each WarmCandle object.
@@ -214,8 +209,6 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         # Calculate indicators
         rsi_series = _calculate_rsi(prices, RSI_PERIOD)
         bb_percent_b_series = _calculate_bollinger_bands_percent_b(prices, BB_PERIOD, BB_K)
-        # SMA is calculated but not used in the final conditions of this rule version
-        _ = _calculate_sma(prices, SMA_PERIOD) 
 
         # Ensure we have at least one valid value for each indicator
         if len(rsi_series) == 0 or len(bb_percent_b_series) == 0:
@@ -245,19 +238,17 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         else:
             # No current price available from hot or warm data. Cannot generate a relevant signal.
             continue
-
-        # Apply the rule's conditions for long entry (RSI < 40, BB%B < 0.2)
-        if (last_bb_percent_b < 0.2 and
-            last_rsi < 40):
+        
+        # Apply the rule's conditions for long entry: (RSI < 20) OR (BB%B < 0)
+        if (last_rsi < 20) or (last_bb_percent_b < 0):
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
                 price=current_price,
                 rule_id=RULE_ID
             ))
-        # Apply the rule's conditions for short entry (RSI > 60, BB%B > 0.8)
-        elif (last_bb_percent_b > 0.8 and
-              last_rsi > 60):
+        # Apply the rule's conditions for short entry: (RSI > 80) OR (BB%B > 1)
+        elif (last_rsi > 80) or (last_bb_percent_b > 1):
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
