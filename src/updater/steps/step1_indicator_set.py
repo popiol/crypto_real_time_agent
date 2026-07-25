@@ -100,16 +100,22 @@ def run(config: AppConfig, state_dir: Path) -> None:
     set_path = paths.indicator_set(state_dir)
     plan_path = paths.next_cycle_plan(state_dir)
 
-    if set_path.exists():
+    bootstrap = not set_path.exists()
+    if bootstrap:
+        action, plan_description = "new_rule", None
+        logger.info("No indicator_set.json found; bootstrapping initial indicator set")
+    else:
         action, plan_description = _read_plan(plan_path)
         if action == "continue":
             logger.info("Indicator set unchanged (previous cycle succeeded)")
             return
-    else:
-        plan_description = None
+        logger.info(
+            "Revising indicator set: plan action=%s — %s",
+            action, plan_description or "(no description)",
+        )
 
     current: IndicatorSet | None = None
-    if set_path.exists():
+    if not bootstrap:
         try:
             current = IndicatorSet.model_validate_json(
                 set_path.read_text(encoding="utf-8")

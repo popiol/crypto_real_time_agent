@@ -47,7 +47,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
     strategy = sys.modules.get("src.strategy.strategy")
     if strategy is not None:
         importlib.reload(strategy)
-    from src.strategy.strategy import ACTIVE_RULES
+    from src.strategy.strategy import ACTIVE_RULE
 
     ledger_signals = storage.read_signals(config)
     transaction_gains = _load_transaction_gains(config)
@@ -57,13 +57,13 @@ def run(config: AppConfig, state_dir: Path) -> None:
     desc_cache: dict[str, str] = _load_desc_cache(prior_eval_path)
     zero_cycles_cache: dict[str, int] = _load_zero_cycles_cache(prior_eval_path)
 
-    scores: list[RuleScore] = []
-    for rule_module in ACTIVE_RULES:
-        parts = rule_module.__name__.split(".")
-        rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
-        description = _describe(rule_id, rule_module, desc_cache, config.llm_model)
-        desc_cache[rule_id] = description
-        scores.append(_score(rule_id, description, ledger_signals, zero_cycles_cache, transaction_gains, config))
+    parts = ACTIVE_RULE.__name__.split(".")
+    rule_id = f"{parts[-2]}_{parts[-1]}"  # e.g. rule_01_spread_compression_v1
+    description = _describe(rule_id, ACTIVE_RULE, desc_cache, config.llm_model)
+    desc_cache[rule_id] = description
+    scores: list[RuleScore] = [
+        _score(rule_id, description, ledger_signals, zero_cycles_cache, transaction_gains, config)
+    ]
 
     try:
         summary_result = llm_structured(
@@ -366,12 +366,28 @@ def _score(
     mature = evaluation_days >= config.rule_mature_days
     if signal_count < config.rule_min_signals:
         status = "candidate"
+        logger.info(
+            "Rule %s: candidate (%d/%d signals evaluated)",
+            rule_id, signal_count, config.rule_min_signals,
+        )
     elif mature and avg_transaction_gain <= config.rule_mature_deprecation_gain:
         status = "deprecate"
+        logger.warning(
+            "Rule %s: deprecate — mature (%dd) with avg_transaction_gain=%.4f <= %.4f",
+            rule_id, evaluation_days, avg_transaction_gain, config.rule_mature_deprecation_gain,
+        )
     elif not mature and avg_gain_pct < config.rule_early_deprecation_gain:
         status = "deprecate"
+        logger.warning(
+            "Rule %s: deprecate — early (%dd) with avg_gain_pct=%.4f < %.4f",
+            rule_id, evaluation_days, avg_gain_pct, config.rule_early_deprecation_gain,
+        )
     else:
         status = "active"
+        logger.info(
+            "Rule %s: active (score=%.4f, avg_gain_pct=%.4f, signal_count=%d)",
+            rule_id, score, avg_gain_pct, signal_count,
+        )
 
     return RuleScore(
         rule_id=rule_id,

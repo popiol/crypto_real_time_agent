@@ -112,11 +112,11 @@ data/
 The strategy is a single Python module `strategy/strategy.py` that exposes one function:
 
 ```python
-def find_buy_signals(data: MarketData) -> list[BuySignal]:
+def find_signals(data: MarketData) -> list[BuySignal | SellSignal]:
     ...
 ```
 
-`MarketData` is a typed object containing all three storage tiers for all tracked pairs. `BuySignal` carries:
+`MarketData` is a typed object containing all three storage tiers for all tracked pairs. Each signal carries:
 - `pair` — the currency pair
 - `rule_id` — the identifier of the rule that fired
 - `timestamp` — when the signal was generated
@@ -128,11 +128,11 @@ def find_buy_signals(data: MarketData) -> list[BuySignal]:
 Each rule version is a self-contained Python file under `strategy/rules/<rule_name>/`. Each file exposes a single function:
 
 ```python
-def rule(data: MarketData) -> list[BuySignal]:
+def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     ...
 ```
 
-`strategy.py` imports the registered version files and calls their `rule` functions, merging all outputs. Rules are purely functional — they read data and return signals; they have no side effects.
+Exactly one rule is active at a time. `strategy.py` holds a single `ACTIVE_RULE` import, and `find_signals()` calls only that module's `signal()` function — this matches the Strategy Updater's one-hypothesis-per-cycle learning loop (§8): there is always exactly one hypothesis under test, never a portfolio of concurrently running rules. Rules are purely functional — they read data and return signals; they have no side effects.
 
 Directory layout:
 
@@ -149,7 +149,7 @@ strategy/
 
 ### 5.3 Rule versioning
 
-Each active rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When a rule is revised, a new version file (`v2.py`, `v3.py`, …) is added to the rule's folder and registered in `strategy.py`. The old version file is kept for signal traceability but is unregistered once it is dropped or superseded. Multiple versions of the same rule can be active simultaneously while their relative performance is being assessed.
+Each rule version has a unique `rule_id` formed from the rule name and version (e.g., `rule_01_spread_compression_v2`). When the Strategy Updater implements a new rule idea (§8.2 Step 5), it replaces `ACTIVE_RULE` in `strategy.py` with the new version — a `fix` idea's version file is added alongside the previous version of the same rule, a `new_rule` idea's file goes in a new folder. Either way, the new version immediately becomes the sole active rule. The previous version's file is kept on disk under `strategy/rules/` for signal traceability but is no longer imported or executed once replaced.
 
 ---
 
@@ -213,6 +213,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | `data/state/train_set.json` | Accumulating samples of (indicator values from 24h ago, target: last 24h change) across all pairs and cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
 | `data/state/next_cycle_plan.json` | Plan produced at end of each cycle: action (`continue`, `fix`, `new_rule`), and for `fix`/`new_rule`, a description of what to attempt |
+| `data/state/last_implemented.json` | `{rule_id, cycle_id}` of the most recently implemented rule (the current `ACTIVE_RULE`). Signal outcomes lag implementation by design (24h+ to resolve), so this is how later steps in the *following* cycle (evaluate, trace, plan, and a `fix` idea's `target_rule`) know which rule they're following up on |
 
 ### 8.2 Pipeline steps
 
@@ -243,20 +244,20 @@ Traces are retrieved by embedding the current plan and performing cosine similar
 *Output*: selected idea (in-memory)
 
 The LLM generates exactly one idea per cycle, derived from the relation analysis. Two kinds:
-- **New rule** — an entirely new rule concept; if implemented, a new rule folder and `v1.py` are created.
-- **Fix** — a targeted change to the rule from the previous cycle; if implemented, a new version file is added alongside the existing one.
+- **New rule** — an entirely new rule concept; if implemented, a new rule folder and `v1.py` are created. `target_rule` is null.
+- **Fix** — a targeted change to the currently active rule; if implemented, a new version file is added alongside the existing one. `target_rule` is always the current `ACTIVE_RULE`'s `rule_id`, set directly from `last_implemented.json` rather than asked of the LLM — since only one rule is ever active, there is never any ambiguity about what a "fix" targets.
 
 #### Step 5 — Implement rule
 *Inputs*: selected idea, source of the existing rule (for fix ideas)  
-*Output*: new or updated rule version file under `strategy/rules/`, `strategy.py` (registrations updated), `idea_backlog.json` (idea marked `implemented`)
+*Output*: new rule version file under `strategy/rules/`, `strategy.py` (`ACTIVE_RULE` updated)
 
-Generates real, executable Python code from the idea produced in step 4. At most one rule version is added per pipeline run. Simultaneously, rule versions deprecated in step 6 are unregistered from `strategy.py` (files are kept for signal traceability). Both imports and `ACTIVE_RULES` entries are guarded for idempotency.
+Generates real, executable Python code from the idea produced in step 4. Exactly one rule version is added per pipeline run, and it becomes the sole `ACTIVE_RULE` in `strategy.py`, replacing whichever rule was previously active. The previous version's file is kept under `strategy/rules/` for signal traceability but is no longer imported or executed.
 
-#### Step 6 — Evaluate outcomes and score rules
+#### Step 6 — Evaluate outcomes and score the active rule
 *Inputs*: signal ledger (signals emitted more than 24h ago with `outcome = null`), prior `rule_evaluation.json`  
-*Output*: `rule_evaluation.json` (updated), `signal_evaluation.json`
+*Output*: `rule_evaluation.json` (updated — one entry, for the current `ACTIVE_RULE`), `signal_evaluation.json`
 
-Fills in signal outcomes from tier data. Computes per-rule metrics:
+Fills in signal outcomes from tier data. Computes metrics for the currently active rule:
 - `signal_count`, `evaluation_days`
 - `avg_gain_pct`, `recent_avg_gain_pct` (last 48h of data)
 - `min_gain_pct` (worst result), `p25_gain_pct`, `p75_gain_pct`
@@ -310,13 +311,13 @@ The plan is the primary input to step 1 of the next cycle.
 ### 8.3 Rule lifecycle
 
 ```
-[proposed in backlog] → [implemented / candidate] → [active] → [deprecated]
+[idea generated] → [implemented / candidate] → [active] → [deprecated] → replaced
 ```
 
-- **Proposed**: idea exists in the backlog, not yet in `strategy/rules/`.
-- **Candidate**: version file exists and is registered in `strategy.py`, but below the minimum signal threshold to be scored.
-- **Active**: version has enough signal history and composite score is above the deprecation threshold.
-- **Deprecated**: score fell below the deprecation threshold or zero-signal limit was reached. Unregistered from `strategy.py` but the version file is kept for signal traceability.
+- **Idea**: generated in step 4 and implemented immediately in step 5 — ideas are not queued or persisted separately; there is no backlog.
+- **Candidate**: the rule's file exists and it is the current `ACTIVE_RULE` in `strategy.py`, but it has fewer signals than the minimum threshold to be scored.
+- **Active**: the rule has enough signal history and its composite score is above the deprecation threshold.
+- **Deprecated**: the rule's score fell below the deprecation threshold or its zero-signal-cycle limit was reached (§8.2 Step 6). Because exactly one rule is active at a time, a deprecated rule is not immediately unregistered — it keeps running and emitting signals until the following cycle's Step 5 implements its replacement (`next_cycle_plan.json` action `fix` or `new_rule`, §8.2 Step 9) and takes over `ACTIVE_RULE`. The deprecated rule's file remains under `strategy/rules/` for signal traceability.
 
 ---
 

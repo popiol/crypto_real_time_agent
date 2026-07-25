@@ -21,10 +21,10 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from pydantic import BaseModel
 
+from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.llm import llm_structured
@@ -48,9 +48,12 @@ def run(config: AppConfig, state_dir: Path) -> None:
     traces_dir = paths.traces_dir(state_dir)
     traces_dir.mkdir(exist_ok=True)
 
-    rule_id, cycle_id = _resolve_target_rule(state_dir)
+    rule_id, cycle_id = _resolve_target_rule(state_dir, config)
     if rule_id is None:
         logger.info("No implemented rule to trace; skipping episodic trace step")
+        return
+    if cycle_id is None:
+        logger.warning("No quote data available; skipping episodic trace step")
         return
 
     trace_path = paths.trace_file(state_dir, cycle_id)
@@ -97,13 +100,15 @@ def run(config: AppConfig, state_dir: Path) -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _resolve_target_rule(state_dir: Path) -> tuple[str | None, str]:
+def _resolve_target_rule(
+    state_dir: Path, config: AppConfig
+) -> tuple[str | None, str | None]:
     """Return (rule_id, cycle_id) for the rule to trace."""
     last_path = paths.last_implemented(state_dir)
     if last_path.exists():
         try:
             data = json.loads(last_path.read_text(encoding="utf-8"))
-            return data.get("rule_id"), data.get("cycle_id", _now_cycle_id())
+            return data.get("rule_id"), data.get("cycle_id") or _quote_cycle_id(config)
         except Exception:
             logger.warning("Could not read last_implemented.json", exc_info=True)
 
@@ -117,15 +122,17 @@ def _resolve_target_rule(state_dir: Path) -> tuple[str | None, str]:
             active = [r for r in evaluation.rules if r.status in ("active", "candidate")]
             if active:
                 newest = min(active, key=lambda r: r.evaluation_days)
-                return newest.rule_id, _now_cycle_id()
+                return newest.rule_id, _quote_cycle_id(config)
         except Exception:
             logger.warning("Could not read rule_evaluation.json for trace target", exc_info=True)
 
-    return None, _now_cycle_id()
+    return None, _quote_cycle_id(config)
 
 
-def _now_cycle_id() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+def _quote_cycle_id(config: AppConfig) -> str | None:
+    """Return a cycle identifier derived from the most recently processed quote."""
+    latest = storage.latest_quote_time(config)
+    return latest.strftime("%Y-%m-%dT%H-%M-%S") if latest else None
 
 
 def _load_rule_score(state_dir: Path, rule_id: str) -> RuleScore | None:

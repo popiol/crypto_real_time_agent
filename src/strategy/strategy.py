@@ -1,62 +1,34 @@
 """Strategy engine — signal detection.
 
-find_signals() is the only public entry point. It iterates ACTIVE_RULES and
-calls signal(data) on each rule module.
+find_signals() is the only public entry point. It calls signal(data) on the
+single currently active rule module.
 
-To add a rule: create src/strategy/rules/<rule_name>/v1.py with a signal()
-function, then add an import and entry to ACTIVE_RULES below.
-To add a version: create v2.py alongside v1.py and add it to ACTIVE_RULES
-while it is being evaluated against the prior version.
+Exactly one rule is active at a time (ACTIVE_RULE), matching the Strategy
+Updater's one-hypothesis-per-cycle learning loop: each cycle either fixes
+the current rule (a new version replaces it) or replaces it outright with a
+new rule concept. Previous rule files are kept on disk under
+strategy/rules/ for signal traceability but are no longer executed once
+replaced.
 """
 
 from __future__ import annotations
 
 import logging
-from types import ModuleType
 
-import src.strategy.rules.rule_02_bollinger_band.v2 as rule_02_bollinger_band_v2
-import src.strategy.rules.HighVolatilityDipBuy.v2 as HighVolatilityDipBuy_v2
-import src.strategy.rules.rule_48_volatility_differentiated_dip_.v1 as rule_48_volatility_differentiated_dip__v1
-import src.strategy.rules.rule_47_deep_volatile_dip_buy_strategy.v1 as rule_47_deep_volatile_dip_buy_strategy_v1
-import src.strategy.rules.rule_46_adaptive_bollinger_band_revers.v1 as rule_46_adaptive_bollinger_band_revers_v1
-import src.strategy.rules.rule_02_bollinger_band.v6 as rule_02_bollinger_band_v6
-import src.strategy.rules.rule_24_bollinger_band_breach_with_mfi.v2 as rule_24_bollinger_band_breach_with_mfi_v2
-import src.strategy.rules.rule_26_bollinger_band_breach_with_mfi.v1 as rule_26_bollinger_band_breach_with_mfi_v1
-import src.strategy.rules.rule_28_bollinger_band_reversal_with_c.v1 as rule_28_bollinger_band_reversal_with_c_v1
-import src.strategy.rules.rule_39_dip_recovery.v1 as rule_39_dip_recovery_v1
-import src.strategy.rules.rule_43_bollinger_band_reversal_with_m.v1 as rule_43_bollinger_band_reversal_with_m_v1
-import src.strategy.rules.rule_44_bollinger_band_reversal_with_m.v1 as rule_44_bollinger_band_reversal_with_m_v1
-import src.strategy.rules.rule_45_bollinger_band_reversal_with_m.v1 as rule_45_bollinger_band_reversal_with_m_v1
+import src.strategy.rules.HighVolatilityDipBuy.v2 as ACTIVE_RULE
 from src.agent.models import BuySignal, MarketData, SellSignal
 
 Signal = BuySignal | SellSignal
 
-ACTIVE_RULES: list[ModuleType] = [
-    rule_02_bollinger_band_v2,
-    rule_26_bollinger_band_breach_with_mfi_v1,
-    rule_28_bollinger_band_reversal_with_c_v1,
-    rule_24_bollinger_band_breach_with_mfi_v2,
-    rule_02_bollinger_band_v6,
-    rule_39_dip_recovery_v1,
-    rule_43_bollinger_band_reversal_with_m_v1,
-    rule_44_bollinger_band_reversal_with_m_v1,
-    rule_45_bollinger_band_reversal_with_m_v1,
-    rule_46_adaptive_bollinger_band_revers_v1,
-    rule_47_deep_volatile_dip_buy_strategy_v1,
-    rule_48_volatility_differentiated_dip__v1,
-    HighVolatilityDipBuy_v2,
-]
-
 
 def find_signals(data: MarketData) -> list[Signal]:
+    parts = ACTIVE_RULE.__name__.split(".")
+    rule_id = f"{parts[-2]}_{parts[-1]}"
     signals: list[Signal] = []
-    for rule in ACTIVE_RULES:
-        parts = rule.__name__.split(".")
-        rule_id = f"{parts[-2]}_{parts[-1]}"
-        try:
-            for signal in rule.signal(data):
-                signal.rule_id = rule_id
-                signals.append(signal)
-        except Exception:  # noqa: BLE001
-            logging.exception("Rule %s raised an exception", rule.__name__)
+    try:
+        for signal in ACTIVE_RULE.signal(data):
+            signal.rule_id = rule_id
+            signals.append(signal)
+    except Exception:  # noqa: BLE001
+        logging.exception("Rule %s raised an exception", ACTIVE_RULE.__name__)
     return signals

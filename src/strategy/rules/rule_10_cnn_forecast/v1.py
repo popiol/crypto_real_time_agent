@@ -157,17 +157,26 @@ def _save_pending(records: list[dict]) -> None:
     _PENDING_PATH.write_text(text + ("\n" if records else ""), encoding="utf-8")
 
 
+# ── Time ──────────────────────────────────────────────────────────────────────
+
+
+def _latest_quote_time(data: MarketData) -> datetime:
+    """Return the most recent tick timestamp in `data`, so replayed backtests
+    advance on the simulated timeline instead of the wall clock."""
+    times = [pair_data.hot[-1].polled_at for pair_data in data.values() if pair_data.hot]
+    return max(times) if times else datetime.now(timezone.utc)
+
+
 # ── Label + train ─────────────────────────────────────────────────────────────
 
 
 def _label_and_train(
-    pending: list[dict], current_prices: dict[str, float]
+    pending: list[dict], current_prices: dict[str, float], now: datetime
 ) -> list[dict]:
     """Label records old enough to have a known outcome; train one step each."""
     global _training_steps
     import numpy as np
 
-    now = datetime.now(timezone.utc)
     remaining: list[dict] = []
 
     for rec in pending:
@@ -277,7 +286,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     if _model is None:
         _load_model_and_state()
 
-    now = datetime.now(timezone.utc)
+    now = _latest_quote_time(data)
     current_prices = {
         pair: pair_data.hot[-1].last_price
         for pair, pair_data in data.items()
@@ -285,7 +294,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     }
 
     pending = _load_pending()
-    pending = _label_and_train(pending, current_prices)
+    pending = _label_and_train(pending, current_prices, now)
     pending = _add_records(pending, data, now)
     _save_pending(pending)
 

@@ -38,7 +38,6 @@ import logging
 import re
 import subprocess
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -47,7 +46,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 import src.agent.models as _agent_models
-from src.agent.db import open_db
+from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.code_diff import CodeDiff, apply_changes
@@ -199,16 +198,28 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 
 
 def run(config: AppConfig, state_dir: Path) -> None:
-    _unregister_dropped(state_dir, config)
-
     # Load previous cycle's plan and context
     current_plan = _load_current_plan(state_dir)
     last_rule_id, _last_cycle_id = _load_last_implemented(state_dir)
 
     # Retrieve relevant past traces and run relation analysis
     traces = _retrieve_top_k_traces(state_dir, current_plan.description, config)
+    logger.info(
+        "Cycle plan: action=%s%s | retrieved %d trace(s)",
+        current_plan.action,
+        f" — {current_plan.description}" if current_plan.description else "",
+        len(traces),
+    )
     try:
         analysis = _run_relation_analysis(state_dir, traces, config)
+        logger.info(
+            "Relation analysis: %d positive pattern(s), %d negative pattern(s), "
+            "key_indicators=%s | suggested_direction=%s",
+            len(analysis.positive_patterns),
+            len(analysis.negative_patterns),
+            analysis.key_indicators,
+            analysis.suggested_direction,
+        )
     except Exception:
         logger.exception("Relation analysis failed; using empty analysis")
         analysis = _RelationAnalysis(
@@ -220,10 +231,17 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     # Generate exactly one rule idea
     try:
-        idea = _generate_idea(analysis, current_plan, config)
+        idea = _generate_idea(analysis, current_plan, last_rule_id, config)
         # Ensure idea_id is set
         if not idea.idea_id:
             idea = idea.model_copy(update={"idea_id": str(uuid.uuid4())})
+        logger.info(
+            "Generated idea '%s' (kind=%s, target_rule=%s): %s",
+            idea.title,
+            idea.kind,
+            idea.target_rule,
+            idea.rationale,
+        )
     except Exception:
         logger.exception("Idea generation failed; skipping implementation")
         _write_next_cycle_plan(state_dir, last_rule_id, analysis, config)
@@ -236,7 +254,7 @@ def run(config: AppConfig, state_dir: Path) -> None:
         implemented = _generate_code(idea, rule_id, config.llm_model)
         rule_path.parent.mkdir(parents=True, exist_ok=True)
         rule_path.write_text(implemented.code, encoding="utf-8")
-        _register_rule(_STRATEGY_FILE, rule_id)
+        _set_active_rule(_STRATEGY_FILE, rule_id)
         _commit_and_push(rule_id, implemented.function_name)
         implemented_rule_id = rule_id
         logger.info("Implemented rule %s at %s", rule_id, rule_path)
@@ -245,14 +263,26 @@ def run(config: AppConfig, state_dir: Path) -> None:
 
     # Write last_implemented.json for the new rule
     if implemented_rule_id:
-        cycle_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-        _write_last_implemented(state_dir, implemented_rule_id, cycle_id)
+        cycle_id = _cycle_id(config)
+        if cycle_id is None:
+            logger.warning(
+                "No quote data available; skipping last_implemented.json write for %s",
+                implemented_rule_id,
+            )
+        else:
+            _write_last_implemented(state_dir, implemented_rule_id, cycle_id)
 
     # Write next_cycle_plan.json based on previous rule's performance
     _write_next_cycle_plan(state_dir, last_rule_id, analysis, config)
 
 
 # ── Context loading ───────────────────────────────────────────────────────────
+
+
+def _cycle_id(config: AppConfig) -> str | None:
+    """Return a cycle identifier derived from the most recently processed quote."""
+    latest = storage.latest_quote_time(config)
+    return latest.strftime("%Y-%m-%dT%H-%M-%S") if latest else None
 
 
 def _load_current_plan(state_dir: Path) -> NextCyclePlan:
@@ -463,7 +493,10 @@ def _run_relation_analysis(
 
 
 def _generate_idea(
-    analysis: _RelationAnalysis, current_plan: NextCyclePlan, config: AppConfig
+    analysis: _RelationAnalysis,
+    current_plan: NextCyclePlan,
+    last_rule_id: str | None,
+    config: AppConfig,
 ) -> RuleIdea:
     plan_section = f"Current cycle plan:\nAction: {current_plan.action}\n"
     if current_plan.description:
@@ -473,18 +506,25 @@ def _generate_idea(
         f"{plan_section}\n"
         f"Relation analysis findings:\n{analysis.model_dump_json(indent=2)}\n\n"
         "Generate exactly ONE rule idea based on these findings. "
-        "If the plan action is 'fix', the idea must have kind='modify_rule' and must name "
-        "the target_rule. Otherwise, kind='new_rule' and target_rule must be null. "
-        "Include a unique idea_id (UUID or short slug), title, description, rationale, "
-        "and pseudocode."
+        "If the plan action is 'fix', set kind='modify_rule' (target_rule is filled in "
+        "automatically — do not invent one). Otherwise, kind='new_rule' and target_rule "
+        "must be null. Include a unique idea_id (UUID or short slug), title, description, "
+        "rationale, and pseudocode."
     )
 
-    return llm_structured(
+    idea = llm_structured(
         model=config.llm_model,
         system=_IDEA_GENERATION_SYSTEM,
         user=user,
         output_type=RuleIdea,
     )
+
+    # There is exactly one active rule at a time, so a "fix" can only ever
+    # target it — never trust an LLM-guessed target_rule string here.
+    if current_plan.action == "fix" and last_rule_id is not None:
+        idea = idea.model_copy(update={"kind": "modify_rule", "target_rule": last_rule_id})
+
+    return idea
 
 
 # ── Next-cycle plan ───────────────────────────────────────────────────────────
@@ -539,10 +579,11 @@ def _write_next_cycle_plan(
 
     plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     logger.info(
-        "next_cycle_plan.json written: action=%s (rule %s avg_gain=%.4f)",
+        "next_cycle_plan.json written: action=%s (rule %s avg_gain=%.4f) — %s",
         plan.action,
         last_rule_id,
         rule_score.avg_gain_pct,
+        plan.description,
     )
 
 
@@ -594,7 +635,7 @@ def _next_rule_path(idea: RuleIdea) -> tuple[str, Path]:
             m = re.match(r"v(\d+)\.py$", existing[-1].name)
             next_ver = (int(m.group(1)) + 1) if m else 2
         else:
-            next_ver = 2
+            next_ver = 1
         rule_id = f"{base}_v{next_ver}"
         return rule_id, folder / f"v{next_ver}.py"
     else:
@@ -756,110 +797,29 @@ def _generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
 # ── Strategy registration ─────────────────────────────────────────────────────
 
 
-def _register_rule(strategy_path: Path, rule_id: str) -> None:
-    """Add import and ACTIVE_RULES entry for the new rule version."""
+def _set_active_rule(strategy_path: Path, rule_id: str) -> None:
+    """Replace the currently active rule with `rule_id`.
+
+    Exactly one rule is ever active (see strategy.py), so implementing a new
+    rule always replaces whichever one was previously active — there is no
+    separate "unregister" step. The old rule's file is left on disk under
+    strategy/rules/ for signal traceability.
+    """
     content = strategy_path.read_text(encoding="utf-8")
     import_path = _rule_id_to_import_path(rule_id)
-    import_line = f"import src.strategy.rules.{import_path} as {rule_id}"
-
-    if import_line not in content:
-        last_import = re.search(
-            r"^import src\.strategy\.rules\.\S+ as \S+$", content, re.MULTILINE
-        )
-        if last_import:
-            content = (
-                content[: last_import.end()]
-                + "\n"
-                + import_line
-                + content[last_import.end() :]
-            )
-        else:
-            content = import_line + "\n" + content
-
-    if f"    {rule_id}," not in content:
-        content = re.sub(
-            r"(ACTIVE_RULES[^=]*=\s*\[)(.*?)(\n\])",
-            rf"\1\2\n    {rule_id},\3",
-            content,
-            count=1,
-            flags=re.DOTALL,
-        )
+    new_import = f"import src.strategy.rules.{import_path} as ACTIVE_RULE"
+    content, n = re.subn(
+        r"^import src\.strategy\.rules\.\S+ as ACTIVE_RULE$",
+        new_import,
+        content,
+        count=1,
+        flags=re.MULTILINE,
+    )
+    if n == 0:
+        raise ValueError("strategy.py has no 'import ... as ACTIVE_RULE' line to replace")
 
     strategy_path.write_text(content, encoding="utf-8")
-    logger.info("Registered %s in strategy.py", rule_id)
-
-
-def _unregister_dropped(state_dir: Path, config: AppConfig) -> None:
-    to_remove: list[str] = []
-
-    rule_eval_path = paths.rule_evaluation(state_dir)
-    if rule_eval_path.exists():
-        try:
-            evaluation = RuleEvaluation.model_validate_json(
-                rule_eval_path.read_text(encoding="utf-8")
-            )
-            to_remove += [
-                r.rule_id for r in evaluation.rules if r.status == "deprecate"
-            ]
-        except Exception:
-            logger.warning("Could not read rule_evaluation.json for unregistration")
-
-    if not to_remove:
-        return
-
-    strategy_path = _STRATEGY_FILE
-    if not strategy_path.exists():
-        return
-
-    for rule_id in set(to_remove):
-        if f" as {rule_id}" not in strategy_path.read_text(encoding="utf-8"):
-            logger.info("Rule %s not found in strategy.py; skipping", rule_id)
-            continue
-        _unregister_rule(strategy_path, rule_id)
-        _remove_from_rule_evaluation(state_dir, rule_id)
-        _remove_signals(rule_id, config)
-        logger.info(
-            "Unregistered %s from strategy.py, rule_evaluation.json, and signal ledger",
-            rule_id,
-        )
-
-
-def _unregister_rule(strategy_path: Path, rule_id: str) -> None:
-    lines = strategy_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    filtered = [
-        line
-        for line in lines
-        if f" as {rule_id}" not in line
-        and not re.fullmatch(rf"\s+{re.escape(rule_id)},?\n?", line)
-    ]
-    strategy_path.write_text("".join(filtered), encoding="utf-8")
-
-
-def _remove_from_rule_evaluation(state_dir: Path, rule_id: str) -> None:
-    rule_eval_path = paths.rule_evaluation(state_dir)
-    if not rule_eval_path.exists():
-        return
-    try:
-        evaluation = RuleEvaluation.model_validate_json(
-            rule_eval_path.read_text(encoding="utf-8")
-        )
-        evaluation.rules = [r for r in evaluation.rules if r.rule_id != rule_id]
-        rule_eval_path.write_text(
-            evaluation.model_dump_json(indent=2), encoding="utf-8"
-        )
-    except Exception:
-        logger.warning(
-            "Could not update rule_evaluation.json after unregistering %s", rule_id
-        )
-
-
-def _remove_signals(rule_id: str, config: AppConfig) -> None:
-    try:
-        with open_db(config.data_dir) as con:
-            con.execute("DELETE FROM signals WHERE rule_id = ?", (rule_id,))
-        logger.info("Deleted signals for deprecated rule %s", rule_id)
-    except Exception:
-        logger.warning("Could not delete signals for rule %s", rule_id, exc_info=True)
+    logger.info("Set active rule to %s in strategy.py", rule_id)
 
 
 def _commit_and_push(rule_id: str, function_name: str) -> None:

@@ -73,6 +73,13 @@ def read_ticks(pair: str, config: AppConfig) -> list[Tick]:
     return [_tick_from_row(r) for r in rows]
 
 
+def latest_quote_time(config: AppConfig) -> datetime | None:
+    """Return the polled_at of the most recent tick across all pairs, or None if no ticks exist."""
+    with open_db(config.data_dir) as con:
+        row = con.execute("SELECT MAX(polled_at) AS latest FROM hot_ticks").fetchone()
+    return _parse_dt(row["latest"]) if row and row["latest"] else None
+
+
 def write_ticks(
     ticks: list[Tick],
     config: AppConfig,
