@@ -311,7 +311,15 @@ def _score(
     transaction_gains: dict[str, list[float]],
     config: AppConfig,
 ) -> RuleScore:
-    emitted = [s for s in ledger_signals if s.get("rule_id") == rule_id]
+    # Only buy signals represent the rule's own trading hypothesis and get
+    # evaluated (evaluator.py only ever resolves direction='buy' rows) — a
+    # sell signal is just an exit mechanism for an existing long, never its
+    # own countable signal, so counting it here would make emitted_signal_count
+    # nonzero for a rule that in fact has nothing evaluable at all.
+    emitted = [
+        s for s in ledger_signals
+        if s.get("rule_id") == rule_id and s.get("direction", "buy") == "buy"
+    ]
     emitted_signal_count = len(emitted)
     matching = [s for s in emitted if s.get("outcome") is not None]
     signal_count = len(matching)
