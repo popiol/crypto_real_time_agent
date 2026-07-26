@@ -92,12 +92,27 @@ LONG_ONLY_CONSTRAINT = (
     "bullish condition in the same rule — not as the rule's only/primary signal."
 )
 
+SIGNAL_FIELDS_CONSTRAINT = (
+    "SIGNAL FIELDS (hard constraint): BuySignal/SellSignal have exactly these fields "
+    "you may set: pair, timestamp, price, rule_id, confidence. Do NOT pass `indicators=` "
+    "yourself — it is filled in automatically, after your signal() function returns, by "
+    "the code that calls it; any value you set will be silently overwritten. Do NOT "
+    "invent other fields (e.g. profit_target_pct, stop_loss_pct, max_hold_hours) to "
+    "communicate exit parameters to 'the trading agent' — no such mechanism exists. "
+    "Position sizing and exit timing are fixed and config-driven (equal-sized positions, "
+    "a fixed max hold time), not influenced by anything a rule returns beyond pair/price/"
+    "timestamp/confidence. A rule that tries to pass extra per-signal parameters this way "
+    "will crash with a validation error the moment it fires, since indicators must be "
+    "dict[str, float | None] — no strings, no other keys."
+)
+
 _IMPLEMENT_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
     "Generate a complete, self-contained Python module that implements the described rule. "
     "Return ONLY the raw Python source code — no explanation, no markdown, no code fences. "
     + DATA_WINDOW_CONSTRAINT
     + "\n\n" + LONG_ONLY_CONSTRAINT
+    + "\n\n" + SIGNAL_FIELDS_CONSTRAINT
 )
 
 _FIX_SYSTEM = (
@@ -107,6 +122,7 @@ _FIX_SYSTEM = (
     "Do not rewrite parts that are already correct.\n\n"
     + DATA_WINDOW_CONSTRAINT
     + "\n\n" + LONG_ONLY_CONSTRAINT
+    + "\n\n" + SIGNAL_FIELDS_CONSTRAINT
 )
 
 _REFERENCE_RULE = """\
@@ -245,6 +261,30 @@ def _check_syntax(code: str) -> str | None:
     has_return = any(isinstance(node, ast.Return) for node in ast.walk(signal_fn))
     if not has_return:
         return "signal() has no return statement — function body is likely incomplete"
+    bad_call = _find_indicators_kwarg(tree)
+    if bad_call is not None:
+        return (
+            f"Line {bad_call}: BuySignal/SellSignal must not be constructed with "
+            "indicators= — that field is filled in automatically after signal() "
+            "returns; any value set here is silently overwritten and gets validated "
+            "as dict[str, float | None] in the meantime, so non-numeric values (or "
+            "custom exit parameters like profit_target_pct) crash the moment the "
+            "rule fires. Remove the indicators= argument entirely."
+        )
+    return None
+
+
+def _find_indicators_kwarg(tree: ast.AST) -> int | None:
+    """Return the line number of the first BuySignal/SellSignal(... indicators=...)
+    call, or None if there isn't one.
+    """
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not (isinstance(node.func, ast.Name) and node.func.id in ("BuySignal", "SellSignal")):
+            continue
+        if any(kw.arg == "indicators" for kw in node.keywords):
+            return node.lineno
     return None
 
 
