@@ -206,7 +206,7 @@ A signal can have `gain_24h_pct` set and `gain_pct` absent for a long time — t
 A background job runs every hour and resolves two independent outcome fields per pending buy signal:
 
 1. **24h read** (`gain_24h_pct`, `max_gain_24h_pct`): once a signal is 24-48h old, reconstructs prices from the warm tier over that window and writes both fields. This does not require a sell signal or any exit to have happened — it's a fixed snapshot.
-2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or — once nothing has matched by 24h — by a timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since this timeout is deliberately as short as the 24h read (not the 20-day ceiling used earlier), almost every signal reaches a final settled outcome within about a day, rather than staying in 24h-snapshot-only limbo for the rest of its (usually much shorter) lifetime — §8.2 Step 2 prefers `gain_pct` once it exists and only falls back to `gain_24h_pct` in the brief window before it does.
+2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or — once nothing has matched by 24h — by a timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since this timeout is deliberately as short as the 24h read (not the 20-day ceiling used earlier), almost every signal reaches a final settled outcome within about a day, rather than staying in 24h-snapshot-only limbo for the rest of its (usually much shorter) lifetime — §8.2 Step 1 prefers `gain_pct` once it exists and only falls back to `gain_24h_pct` in the brief window before it does.
 
 ---
 
@@ -290,12 +290,12 @@ The LLM generates exactly one idea per cycle, derived from the relation analysis
 Generates real, executable Python code from the idea persisted in step 5. Exactly one rule version is added per pipeline run, and it becomes the sole active rule by being written to `plan.json`, replacing whichever rule was previously active. The previous version's file is kept under `strategy/rules/` for signal traceability but is no longer imported or executed. Also records the cycle's outcome via "Plan next cycle" below — either `action: continue` for the newly-implemented rule, or (if implementation failed) a fresh diagnosis for the still-active rule.
 
 #### Plan next cycle
-*(not one of the 6 numbered steps — `plan_next_cycle.py` is called from step 4, step 5's failure path, and step 6, not once in sequence)*
+*(not one of the 6 numbered steps — `plan_next_cycle.py` is called from step 3, step 5's failure path, and step 6, not once in sequence)*
 
 Decision logic, evaluated fresh every cycle against whichever rule is currently active:
 - If `rule_evaluation.json` has no entry for the rule yet, or the rule has zero *evaluated* signals (`signal_count == 0`) but is actively emitting them (`emitted_signal_count > 0`): `action: continue` — nothing to judge yet, since a signal can only resolve via a matching opposite-direction signal or a 24h timeout (§7), and treating an unresolved rule as 0% gain would replace every rule before it ever gets a fair look.
 - If the rule genuinely never emits any signal at all (`signal_count == 0` and `emitted_signal_count == 0`): falls through to the check below like any other rule — this is a real failure (e.g. an indicator window exceeding the 24-candle warm-tier cap, §5.2), not a timing artifact, and should be diagnosed and replaced.
-- Otherwise, the metric judged is `recent_avg_gain_pct` (last 48h of signal-theoretical gains, §8.2 Step 2) alone — not blended with `avg_transaction_gain` (the portfolio's own trading gate, §10.3, still uses the combined formula; this decision no longer does).
+- Otherwise, the metric judged is `recent_avg_gain_pct` (last 48h of signal-theoretical gains, §8.2 Step 1) alone — not blended with `avg_transaction_gain` (the portfolio's own trading gate, §10.3, still uses the combined formula; this decision no longer does).
   - If `recent_avg_gain_pct` > 0.5%: `action: continue` — leave the indicator set and the active rule alone.
   - Otherwise: one LLM call produces both a narrative diagnosis (why the rule performed as it did) and the fix/new_rule verdict — whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
   - If fixable: `action: fix` with a description of the specific change to attempt.
@@ -314,9 +314,9 @@ When a rule is retired this way (action moves from `continue` to `fix`/`new_rule
   "embedding": [...]
 }
 ```
-This is the only point traces are ever written — a rule that's still active never has one, and once written, a trace is never edited. The `embedding` field is computed from the rule's description for semantic retrieval by step 4 in future cycles.
+This is the only point traces are ever written — a rule that's still active never has one, and once written, a trace is never edited. The `embedding` field is computed from the rule's description for semantic retrieval by step 3 in future cycles.
 
-Step 4 re-runs this check immediately at the start of every cycle rather than trusting the previous cycle's stale verdict: if the rule is still performing, the cycle ends there; if it's no longer performing, the cycle proceeds straight into relation analysis → idea → implementation in the same run, rather than waiting a full cycle to act. Whenever a rule is actually replaced (step 6), the plan written for the *next* cycle is always `continue` for the new rule — the old rule's diagnosis is never carried over and misapplied to its replacement, since the new rule hasn't had any chance yet to earn a verdict of its own.
+Step 3 re-runs this check immediately at the start of every cycle rather than trusting the previous cycle's stale verdict: if the rule is still performing, the cycle ends there; if it's no longer performing, the cycle proceeds straight into relation analysis → idea → implementation in the same run, rather than waiting a full cycle to act. Whenever a rule is actually replaced (step 6), the plan written for the *next* cycle is always `continue` for the new rule — the old rule's diagnosis is never carried over and misapplied to its replacement, since the new rule hasn't had any chance yet to earn a verdict of its own.
 
 ### 8.3 Rule lifecycle
 
@@ -366,7 +366,7 @@ class RelationAnalysis(BaseModel):
     suggested_direction: str       # proposed direction for the next rule idea
 
 class PendingRelationAnalysis(BaseModel):
-    # relation_analysis.json — step 4's output, handed off to step 5
+    # relation_analysis.json — step 3's output, handed off to step 5
     cycle_id: str
     plan: Plan
     analysis: RelationAnalysis
