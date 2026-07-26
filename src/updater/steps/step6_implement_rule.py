@@ -80,11 +80,24 @@ DATA_WINDOW_CONSTRAINT = (
     "daily history exists anywhere — it does not."
 )
 
+LONG_ONLY_CONSTRAINT = (
+    "LONG-ONLY (hard constraint): this system only ever holds long positions. "
+    "BuySignal opens one; SellSignal must ONLY be used to close an existing long "
+    "position for that pair — never as a standalone bearish/short entry hypothesis. "
+    "A rule whose core hypothesis is 'detect a bearish/overbought/breakdown setup and "
+    "emit SellSignal to open a short' will never be evaluated: nothing in this system "
+    "resolves outcomes for a sell-direction entry, so its signals accumulate forever "
+    "with no result. If the hypothesis is fundamentally bearish (expecting a price "
+    "decline), express it as a SellSignal that exits a long entered by an *earlier* "
+    "bullish condition in the same rule — not as the rule's only/primary signal."
+)
+
 _IMPLEMENT_SYSTEM = (
     "You are an expert Python developer specialising in quantitative trading rules. "
     "Generate a complete, self-contained Python module that implements the described rule. "
     "Return ONLY the raw Python source code — no explanation, no markdown, no code fences. "
     + DATA_WINDOW_CONSTRAINT
+    + "\n\n" + LONG_ONLY_CONSTRAINT
 )
 
 _FIX_SYSTEM = (
@@ -93,6 +106,7 @@ _FIX_SYSTEM = (
     "Return the changes needed to complete it into a fully working module. "
     "Do not rewrite parts that are already correct.\n\n"
     + DATA_WINDOW_CONSTRAINT
+    + "\n\n" + LONG_ONLY_CONSTRAINT
 )
 
 _REFERENCE_RULE = """\

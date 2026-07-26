@@ -90,7 +90,14 @@ def write_implemented(state_dir: Path, rule_id: str, cycle_id: str) -> Plan:
     """Record a newly implemented rule as the active one. Nothing to evaluate
     yet, so the plan for next cycle starts at 'continue'.
     """
-    plan = Plan(rule_id=rule_id, cycle_id=cycle_id, action="continue", description=None)
+    prior = load_plan(state_dir)
+    plan = Plan(
+        rule_id=rule_id,
+        cycle_id=cycle_id,
+        action="continue",
+        prev_action=prior.action,
+        description=prior.description,
+    )
     paths.plan(state_dir).write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     logger.info(
         "plan.json written: rule_id=%s cycle_id=%s action=continue (just implemented)",
@@ -157,7 +164,14 @@ def write_next_cycle_plan(
     plan_path = paths.plan(state_dir)
 
     def _write(action: Literal["continue", "fix", "new_rule"], description: str | None) -> Plan:
-        plan = current.model_copy(update={"action": action, "description": description})
+        plan = current.model_copy(update={
+            "prev_action": current.action,
+            "action": action,
+            # Never null out the last real description — 'continue' branches
+            # pass description=None here to mean "no new diagnosis", not
+            # "forget the last one".
+            "description": description if description is not None else current.description,
+        })
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
         return plan
 
@@ -262,7 +276,7 @@ def _write_trace(
         cycle_id=cycle_id,
         hypothesis=hypothesis,
         rule_id=rule_score.rule_id,
-        indicator_set_version=_load_indicator_version(state_dir),
+        indicator_names=_load_indicator_names(state_dir),
         outcome_metrics={
             "avg_gain_pct": rule_score.avg_gain_pct,
             "positive_rate": rule_score.positive_rate,
@@ -279,15 +293,15 @@ def _write_trace(
     logger.info("Episodic trace written: %s (rule=%s, retired)", trace_path, rule_score.rule_id)
 
 
-def _load_indicator_version(state_dir: Path) -> str:
+def _load_indicator_names(state_dir: Path) -> list[str]:
     path = paths.indicator_set(state_dir)
     if not path.exists():
-        return "none"
+        return []
     try:
         indicator_set = IndicatorSet.model_validate_json(path.read_text(encoding="utf-8"))
-        return indicator_set.version
+        return [i.name for i in indicator_set.indicators]
     except Exception:
-        return "unknown"
+        return []
 
 
 def _compute_embedding(text: str, embedding_model: str) -> list[float]:

@@ -133,6 +133,8 @@ Exactly one rule is active at a time. The active rule is *state*, not code: `fin
 
 **Data tier limits.** Every rule receives `data.hot` (≤~300 recent ticks, ~5 minutes), `data.warm` (at most 24 hourly OHLC candles — never more), and `data.cold` (one aggregate row per calendar month: min/max/avg price, avg daily spread, candle count — not a time series, §4.1). An indicator whose lookback exceeds 24 hourly candles cannot be computed from `data.warm`, and `data.cold` cannot substitute for it since it holds no individual hourly/daily closes — only coarse monthly aggregates. A rule that ignores this will pass syntax/type validation but silently return `[]` forever against real data (§8.2 Step 6 prompts the generating LLM with this constraint explicitly, including during fix attempts).
 
+**Long-only.** `BuySignal` opens a long position; `SellSignal` may only be used to close an *existing* long for the same pair — never as a standalone bearish/short entry hypothesis. Nothing in the signal evaluator (§7), portfolio (§10), or scoring (§8.2 Step 1) resolves outcomes for a sell-direction entry — `evaluator.py` only ever queries `direction='buy'` rows, so a rule whose primary hypothesis is "detect a bearish setup, emit SellSignal" accumulates signals that never resolve, forever, with nothing surfacing the failure (the "actively firing, none resolved yet" continue-branch in "Plan next cycle" has no way to distinguish that from a rule that simply hasn't had time yet). Enforced by prompting the generating LLM explicitly (§8.2 Steps 5-6), since nothing downstream can recover from a rule that violates it.
+
 Directory layout:
 
 ```
@@ -222,7 +224,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | `data/state/indicator_set.json` | The current set of LLM-defined indicators: name, description, and generated Python code for each |
 | `data/state/train_set.json` | Accumulating samples of (indicator values captured at signal emission, open/close timestamps, final settled gain) — one per finally-settled signal, across all cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
-| `data/state/plan.json` | `{rule_id, cycle_id, action, description}` — `plan_next_cycle.py`'s single record of both "which rule is active" and "what to do next cycle". `rule_id`/`cycle_id` identify the most recently implemented rule (signal outcomes lag implementation by design, 24h+ to resolve, so this is how later steps know which rule they're following up on); `action`/`description` are `continue`, or `fix`/`new_rule` with a description of what to attempt |
+| `data/state/plan.json` | `{rule_id, cycle_id, action, prev_action, description}` — `plan_next_cycle.py`'s single record of both "which rule is active" and "what to do next cycle". `rule_id`/`cycle_id` identify the most recently implemented rule (signal outcomes lag implementation by design, 24h+ to resolve, so this is how later steps know which rule they're following up on); `action`/`description` are `continue`, or `fix`/`new_rule` with a description of what to attempt. `prev_action` is the action this write replaced, so a plain read shows the transition. `description` never resets to null when `action` becomes `continue` — it keeps the last real diagnosis around rather than discarding it |
 | `data/state/relation_analysis.json` | `{cycle_id, plan, analysis}` — step 3's output, handed off to step 5; cleared once consumed |
 | `data/state/rule_idea.json` | `{cycle_id, idea, plan, analysis}` — step 5's output, handed off to step 6; cleared once consumed |
 
@@ -308,7 +310,7 @@ When a rule is retired this way (action moves from `continue` to `fix`/`new_rule
   "cycle_id": "2026-07-23T10:00:00Z",
   "hypothesis": "...",
   "rule_id": "rule_47_..._v1",
-  "indicator_set_version": "uuid4",
+  "indicator_names": ["rsi_14", "sma_short", "..."],
   "outcome_metrics": { "avg_gain_pct": ..., "positive_rate": ..., "p25": ..., "p75": ... },
   "diagnosis": "...",
   "embedding": [...]
@@ -357,7 +359,8 @@ class Plan(BaseModel):
     rule_id: str | None          # None until step 6 first implements a rule
     cycle_id: str | None         # cycle_id the active rule was implemented in
     action: Literal["continue", "fix", "new_rule"]
-    description: str | None     # what to attempt; None when action is "continue"
+    prev_action: Literal["continue", "fix", "new_rule"] | None   # the action this write replaced
+    description: str | None     # what to attempt; keeps the last real value, never reset to null
 
 class RelationAnalysis(BaseModel):
     positive_patterns: list[str]   # indicator combinations that correlated with positive outcomes
@@ -421,7 +424,7 @@ class EpisodicTrace(BaseModel):
     cycle_id: str
     hypothesis: str
     rule_id: str
-    indicator_set_version: str
+    indicator_names: list[str]     # names of indicators available while this rule ran
     outcome_metrics: dict[str, float]
     diagnosis: str
     embedding: list[float]

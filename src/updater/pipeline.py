@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -73,12 +72,11 @@ def run(config: AppConfig) -> None:
             logger.exception("Step %s failed; continuing with remaining steps", name)
     logger.info("Strategy Updater pipeline complete")
 
-    _archive_state(state_dir)
+    _archive_state(state_dir, cycle_id)
 
 
-def _archive_state(state_dir: Path) -> None:
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-    history_dir = paths.history_dir(state_dir, ts)
+def _archive_state(state_dir: Path, cycle_id: str) -> None:
+    history_dir = paths.history_dir(state_dir, cycle_id)
     archived = 0
     for name in _STATE_FILES:
         src = state_dir / name

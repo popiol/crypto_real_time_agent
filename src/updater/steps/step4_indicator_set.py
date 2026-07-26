@@ -74,7 +74,6 @@ _DEFINE_SYSTEM = (
     "Define a set of indicators suitable for detecting mean-reversion opportunities "
     "in cryptocurrency markets using hot (tick), warm (hourly candle), and cold (monthly) data. "
     "For each indicator provide only its name and a one-sentence description of what it measures. "
-    "Do NOT write any code."
 )
 
 _CODE_SYSTEM = (

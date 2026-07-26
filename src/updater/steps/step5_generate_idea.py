@@ -36,7 +36,7 @@ from src.updater.models import (
     RelationAnalysis,
     RuleIdea,
 )
-from src.updater.steps.step6_implement_rule import DATA_WINDOW_CONSTRAINT
+from src.updater.steps.step6_implement_rule import DATA_WINDOW_CONSTRAINT, LONG_ONLY_CONSTRAINT
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ _IDEA_GENERATION_SYSTEM = (
     "For 'new_rule', propose a genuinely different approach. "
     "Be precise: include thresholds, conditions, and expected market behaviour. "
     + DATA_WINDOW_CONSTRAINT
+    + "\n\n" + LONG_ONLY_CONSTRAINT
 )
 
 

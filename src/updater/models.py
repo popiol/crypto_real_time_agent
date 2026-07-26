@@ -35,11 +35,18 @@ class Plan(BaseModel):
     (last_implemented.json, next_cycle_plan.json) but are always read
     together and rule_id/cycle_id only ever change alongside a fresh
     action/description, so one record covers both.
+
+    prev_action records the action this write replaced, so a plain read of
+    plan.json shows the transition (e.g. fix -> continue), not just the
+    current state. description never resets to null when action becomes
+    'continue' — it keeps the last real diagnosis/description around instead
+    of discarding it, since that's still useful context even once acted on.
     """
 
     rule_id: str | None = None
     cycle_id: str | None = None
     action: Literal["continue", "fix", "new_rule"] = "new_rule"
+    prev_action: Literal["continue", "fix", "new_rule"] | None = None
     description: str | None = None
 
 
@@ -90,7 +97,7 @@ class EpisodicTrace(BaseModel):
     cycle_id: str
     hypothesis: str
     rule_id: str
-    indicator_set_version: str
+    indicator_names: list[str] = []  # default covers pre-existing traces, written under the old indicator_set_version field
     outcome_metrics: dict[str, float]
     diagnosis: str
     embedding: list[float] = []

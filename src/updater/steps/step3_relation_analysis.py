@@ -154,9 +154,11 @@ def _format_traces(traces: list[EpisodicTrace]) -> str:
     parts = []
     for t in traces:
         metrics = ", ".join(f"{k}={v:.4f}" for k, v in t.outcome_metrics.items())
+        indicators = ", ".join(t.indicator_names) if t.indicator_names else "(unknown)"
         parts.append(
             f"Trace {t.cycle_id} (rule={t.rule_id}):\n"
             f"  Hypothesis: {t.hypothesis}\n"
+            f"  Indicators available: {indicators}\n"
             f"  Metrics: {metrics}\n"
             f"  Diagnosis: {t.diagnosis}"
         )
