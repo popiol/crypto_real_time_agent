@@ -8,42 +8,44 @@ The Crypto Real-Time Agent is a locally-run Python application that continuously
 
 ## 2. Components
 
+**Live loop** (`src/agent/loop.py`, continuous, ~1 poll/sec per pair):
+
 ```
-┌─────────────────────────────────────────────────────┐
-│                    Scheduler / Main Loop             │
-│  (polls Kraken, triggers analysis, triggers review)  │
-└────────────┬────────────────────┬───────────────────┘
-             │                    │
-             ▼                    ▼
-  ┌──────────────────┐   ┌─────────────────────┐
-  │  Data Collector  │   │   Strategy Engine   │
-  │  (Kraken API)    │   │  (strategy.py)      │
-  └────────┬─────────┘   └──────────┬──────────┘
-           │                        │
-           ▼                        ▼
-  ┌──────────────────┐   ┌─────────────────────┐
-  │  Tiered Storage  │   │   Signal Ledger     │
-  │  (SQLite)        │   │   (SQLite)          │
-  └──────────────────┘   └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │  Signal Evaluator   │
-                         │  (outcome tracker)  │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │  Strategy Updater   │
-                         │  (LLM pipeline)     │
-                         └──────────┬──────────┘
-                                    │
-                                    ▼
-                         ┌─────────────────────┐
-                         │   strategy.py       │
-                         │  (active rules)     │
-                         └─────────────────────┘
+Data Collector (Kraken API)
+  → Tiered Storage — hot/warm/cold tiers (SQLite: agent.db, §4)
+  → Strategy Engine — dynamically resolves the active rule from plan.json's
+    rule_id on every call, imports it, calls its signal() function (§5)
+  → Signal Ledger — signals table (SQLite: agent.db, §6)
+  → Virtual Portfolio — fills pending orders, then places new ones for the
+    active rule's signals if it clears the recent-gain threshold (§10)
 ```
+
+**Hourly jobs** (`src/process.py`):
+
+```
+Downsample hot tier → warm tier; recompute cold-tier monthly aggregates (§4.2)
+Signal Evaluator — resolves gain_24h_pct (fixed 24h read) and gain_pct
+  (final outcome: sell-signal match, or a 24h timeout) (§7)
+```
+
+**Strategy Updater** (`src/updater/pipeline.py`, every 24h, §8) — evolves which rule is active:
+
+```
+Step 1  Evaluate outcomes, score the active rule   → rule_evaluation.json
+Step 2  Update train set                           → train_set.json
+Step 3  Relation analysis                          → relation_analysis.json
+          ├─ re-checks plan.json fresh; if the rule is still performing,
+          │  stop here — steps 4-6 don't run this cycle
+          └─ if retiring the rule instead: write its episodic trace
+             → traces/<cycle_id>.json (§8.2 "Plan next cycle")
+Step 4  Update indicator set (skipped if the rule is still performing)
+                                                    → indicator_set.json
+Step 5  Generate rule idea                         → rule_idea.json
+Step 6  Implement rule                             → new file under
+          strategy/rules/, plan.json updated with the new active rule_id
+```
+
+`plan.json` is what closes the loop: the Strategy Engine re-reads it on every call, so a newly implemented rule takes effect on the very next poll — no restart, and `strategy.py` itself is never edited (§5.2).
 
 ---
 
