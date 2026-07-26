@@ -48,6 +48,7 @@ from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.llm import llm_structured
 from src.updater.models import EpisodicTrace, IndicatorSet, Plan, RelationAnalysis, RuleEvaluation, RuleScore
+from src.updater.rule_constraints import STATELESS_CONSTRAINT
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,9 @@ _FAILURE_DIAGNOSIS_SYSTEM = (
     "specific about which market conditions helped or hurt performance; "
     "2) determine whether the failure is fixable (wrong thresholds, missing conditions, "
     "parameter tuning) or fundamental (the rule direction does not work for the available data), "
-    "returning 'fix' with a specific actionable change, or 'new_rule' with a new direction."
+    "returning 'fix' with a specific actionable change, or 'new_rule' with a new direction. "
+    "Do not recommend an entry-price-relative stop-loss or profit-target as the fix. "
+    + STATELESS_CONSTRAINT
 )
 
 
