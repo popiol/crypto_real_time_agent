@@ -1,13 +1,14 @@
 """Update train set — design.md §8.2 Step 3. Appends one sample per
-evaluated signal to train_set.json.
+finally-settled signal to train_set.json.
 
-For each signal that now has an evaluated outcome, appends a TrainSample
-using the indicator values already captured on the signal at emission time
-(src.agent.loop._attach_indicators) — not recomputed here, since by the time
-a signal resolves (~24h later) the tier data that produced its original
-indicator readings has already rolled at least partway off data.warm's
-rolling 24-hour window. Uses signal_id for deduplication so re-runs don't
-produce duplicate entries.
+For each signal that now has a final settled outcome (gain_pct — a real
+sell-signal match or the 24h timeout, not just the fixed gain_24h_pct
+snapshot), appends a TrainSample using the indicator values already
+captured on the signal at emission time (src.agent.loop._attach_indicators)
+— not recomputed here, since by the time a signal resolves (~24h later) the
+tier data that produced its original indicator readings has already rolled
+at least partway off data.warm's rolling 24-hour window. Uses signal_id for
+deduplication so re-runs don't produce duplicate entries.
 
 Also prunes indicators that come back null across every new sample this
 cycle from indicator_set.json (moved here from the old standalone compute-
@@ -55,9 +56,9 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
         if not indicator_values:
             continue  # signal predates indicator capture at emission time
 
-        gain_pct = outcome.get("gain_24h_pct") or outcome.get("gain_pct")
+        gain_pct = outcome.get("gain_pct")
         if gain_pct is None:
-            continue
+            continue  # only the final settled outcome counts as a training target
 
         new_samples.append(TrainSample(
             signal_id=signal_id,
@@ -65,6 +66,8 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
             pair=signal.get("pair", ""),
             rule_id=signal.get("rule_id", ""),
             indicators=indicator_values,
+            opened_at=signal.get("emitted_at", ""),
+            closed_at=outcome["evaluated_at"],
             target_gain_pct=gain_pct,
         ))
 

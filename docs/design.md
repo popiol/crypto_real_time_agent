@@ -220,7 +220,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 |---|---|
 | `data/state/rule_evaluation.json` | Accumulated per-rule-version scoring, description, and enhanced metrics — one entry per rule ever evaluated; descriptions are cached here across runs |
 | `data/state/indicator_set.json` | The current set of LLM-defined indicators: name, description, and generated Python code for each |
-| `data/state/train_set.json` | Accumulating samples of (indicator values captured at signal emission, resolved gain) — one per evaluated signal, across all cycles |
+| `data/state/train_set.json` | Accumulating samples of (indicator values captured at signal emission, open/close timestamps, final settled gain) — one per finally-settled signal, across all cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
 | `data/state/plan.json` | `{rule_id, cycle_id, action, description}` — `plan_next_cycle.py`'s single record of both "which rule is active" and "what to do next cycle". `rule_id`/`cycle_id` identify the most recently implemented rule (signal outcomes lag implementation by design, 24h+ to resolve, so this is how later steps know which rule they're following up on); `action`/`description` are `continue`, or `fix`/`new_rule` with a description of what to attempt |
 | `data/state/relation_analysis.json` | `{cycle_id, plan, analysis}` — step 4's output, handed off to step 5; cleared once consumed |
@@ -261,7 +261,7 @@ Computes metrics for the currently active rule:
 *Inputs*: signal ledger (signals newly resolved this cycle, with their `indicators` captured at emission time, §6.1)  
 *Output*: `data/state/train_set.json` (new samples appended), `data/state/indicator_set.json` (dead indicators pruned)
 
-For each signal that now has a resolved outcome and isn't already in the train set, appends `{signal_id, cycle_id, pair, rule_id, indicators, target_gain_pct}` using the `indicators` already stored on the signal record — nothing is recomputed here. The train set accumulates indefinitely across cycles. Any indicator that comes back null across every sample added this cycle is pruned from `indicator_set.json`, since that's the only point a fresh batch of real indicator readings is available to check.
+For each signal that now has a *final settled* outcome (`gain_pct` — a real sell-signal match or the 24h timeout, not just the fixed `gain_24h_pct` snapshot) and isn't already in the train set, appends `{signal_id, cycle_id, pair, rule_id, indicators, opened_at, closed_at, target_gain_pct}` using the `indicators` already stored on the signal record — nothing is recomputed here. `opened_at`/`closed_at` are the signal's `emitted_at` and the outcome's `evaluated_at`. The train set accumulates indefinitely across cycles. Any indicator that comes back null across every sample added this cycle is pruned from `indicator_set.json`, since that's the only point a fresh batch of real indicator readings is available to check.
 
 #### Step 4 — Relation analysis
 *Inputs*: `data/state/plan.json`, `data/state/train_set.json`, top-K episodic traces retrieved from `data/state/traces/` by semantic similarity to the current plan  
@@ -375,6 +375,8 @@ class TrainSample(BaseModel):
     pair: str
     rule_id: str
     indicators: dict[str, float | None]
+    opened_at: str      # signal's emitted_at
+    closed_at: str      # outcome's evaluated_at (final settled outcome only)
     target_gain_pct: float
 
 class TrainSet(BaseModel):

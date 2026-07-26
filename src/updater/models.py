@@ -76,6 +76,8 @@ class TrainSample(BaseModel):
     pair: str
     rule_id: str
     indicators: dict[str, float | None]
+    opened_at: str   # signal's emitted_at
+    closed_at: str   # outcome's evaluated_at (final settled outcome only)
     target_gain_pct: float
 
 
