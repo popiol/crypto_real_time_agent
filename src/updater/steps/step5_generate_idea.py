@@ -1,4 +1,4 @@
-"""Generate rule idea — design.md §8.2 Step 6.
+"""Generate rule idea — design.md §8.2 Step 5.
 
 Given the relation analysis findings and the current cycle plan, generates
 exactly one RuleIdea. For a 'fix' plan, target_rule is always the current
@@ -6,10 +6,10 @@ active rule (taken from plan.json) — never left to the LLM to guess, since
 exactly one rule is ever active (see strategy.py).
 
 run() is this pipeline.py stage's entry point: it reads relation_analysis.json,
-skipping if there's nothing there for the current cycle_id (either step5's
+skipping if there's nothing there for the current cycle_id (either step4's
 run decided action=continue and produced nothing, or a stale file from a run
 where nothing consumed it — either way, not fresh), otherwise generates one
-idea and persists it to rule_idea.json for step7_implement_rule.py's step to
+idea and persists it to rule_idea.json for step6_implement_rule.py's step to
 pick up.
 
 Reads:
@@ -36,7 +36,7 @@ from src.updater.models import (
     RelationAnalysis,
     RuleIdea,
 )
-from src.updater.steps.step7_implement_rule import DATA_WINDOW_CONSTRAINT
+from src.updater.steps.step6_implement_rule import DATA_WINDOW_CONSTRAINT
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +72,7 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
         )
     except Exception:
         logger.exception("Idea generation failed; nothing for implement_rule to pick up")
-        plan_next_cycle_step.write_next_cycle_plan(state_dir, plan, analysis, config)
+        plan_next_cycle_step.write_next_cycle_plan(state_dir, plan, analysis, cycle_id, config)
         paths.relation_analysis(state_dir).unlink(missing_ok=True)
         return
 

@@ -59,8 +59,8 @@ class RelationAnalysis(BaseModel):
 
 
 class PendingRelationAnalysis(BaseModel):
-    """relation_analysis.json — step5_relation_analysis.py's output, handed
-    off to step6_generate_idea.py's step. cycle_id lets the reader tell a
+    """relation_analysis.json — step4_relation_analysis.py's output, handed
+    off to step5_generate_idea.py's step. cycle_id lets the reader tell a
     fresh analysis (produced this same pipeline run) apart from a stale
     leftover from a run where idea generation never got to consume it.
     """
@@ -172,8 +172,8 @@ class RuleIdea(BaseModel):
 
 
 class PendingRuleIdea(BaseModel):
-    """rule_idea.json — the idea step6_generate_idea.py's step produced this
-    cycle, handed off to step7_implement_rule.py's step. cycle_id lets the
+    """rule_idea.json — the idea step5_generate_idea.py's step produced this
+    cycle, handed off to step6_implement_rule.py's step. cycle_id lets the
     reader tell a fresh idea (generated this same pipeline run) apart from a
     stale leftover from a run where implementation never got to consume it.
     """

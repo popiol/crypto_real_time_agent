@@ -1,14 +1,15 @@
-"""Relation analysis — design.md §8.2 Step 5.
+"""Relation analysis — design.md §8.2 Step 4.
 
 run() is this pipeline.py stage's entry point: it re-checks the current plan
-fresh (rather than trusting the previous cycle's stale verdict); if the
-active rule is still performing, it stops there and nothing downstream runs
-this cycle. Otherwise it retrieves the top-K episodic traces most
-semantically similar to the current plan's description, then makes one LLM
-call that looks at a sample of the accumulated train set (indicator values
-paired with their resolved outcome) and those traces to identify which
-indicator patterns preceded positive vs. negative outcomes — and persists the
-result for step6_generate_idea.py's step to pick up.
+fresh (rather than trusting the previous cycle's stale verdict) — this is
+also where a retired rule's episodic trace gets written, see
+plan_next_cycle.py; if the active rule is still performing, it stops there
+and nothing downstream runs this cycle. Otherwise it retrieves the top-K
+episodic traces most semantically similar to the current plan's description,
+then makes one LLM call that looks at a sample of the accumulated train set
+(indicator values paired with their resolved outcome) and those traces to
+identify which indicator patterns preceded positive vs. negative outcomes —
+and persists the result for step5_generate_idea.py's step to pick up.
 
 Reads:
   data/state/plan.json, data/state/train_set.json, data/state/traces/
@@ -194,7 +195,7 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
         # The plan on disk was decided last cycle — re-check fresh rather than
         # trust it blindly, since the active rule's score may have moved on.
         plan = plan_next_cycle_step.write_next_cycle_plan(
-            state_dir, plan, _EMPTY_ANALYSIS, config
+            state_dir, plan, _EMPTY_ANALYSIS, cycle_id, config
         )
         if plan.action == "continue":
             # Exactly one rule can ever be active (see strategy.py), so

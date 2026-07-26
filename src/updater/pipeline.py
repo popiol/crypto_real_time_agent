@@ -25,10 +25,9 @@ from src.updater.steps import (
     step1_indicator_set,
     step2_evaluate_rule,
     step3_train_set,
-    step4_episodic_trace,
-    step5_relation_analysis,
-    step6_generate_idea,
-    step7_implement_rule,
+    step4_relation_analysis,
+    step5_generate_idea,
+    step6_implement_rule,
 )
 
 logger = logging.getLogger(__name__)
@@ -37,10 +36,9 @@ _STEPS: list[tuple[str, Callable]] = [
     ("1 indicator_set", step1_indicator_set.run),
     ("2 evaluate_rule", step2_evaluate_rule.run),
     ("3 train_set", step3_train_set.run),
-    ("4 episodic_trace", step4_episodic_trace.run),
-    ("5 relation_analysis", step5_relation_analysis.run),
-    ("6 generate_idea", step6_generate_idea.run),
-    ("7 implement_rule", step7_implement_rule.run),
+    ("4 relation_analysis", step4_relation_analysis.run),
+    ("5 generate_idea", step5_generate_idea.run),
+    ("6 implement_rule", step6_implement_rule.run),
 ]
 
 

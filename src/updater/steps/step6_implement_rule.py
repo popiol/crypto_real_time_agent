@@ -1,13 +1,13 @@
-"""Implement rule — design.md §8.2 Step 7.
+"""Implement rule — design.md §8.2 Step 6.
 
-Generates real, executable Python code from the idea step6_generate_idea.py's
+Generates real, executable Python code from the idea step5_generate_idea.py's
 step persisted to data/state/rule_idea.json (new_rule → new folder/v1.py;
 fix → new version alongside the existing one), validating and self-correcting
 syntax errors via an LLM diff loop, then commits the new rule file to git.
 
 run() is this pipeline.py stage's entry point: it reads rule_idea.json,
-skipping if there's nothing there for the current cycle_id (either step5's
-run decided action=continue and step6 never produced an idea, or a stale
+skipping if there's nothing there for the current cycle_id (either step4's
+run decided action=continue and step5 never produced an idea, or a stale
 file from a run where nothing consumed it — either way, not fresh),
 otherwise implements it and records the outcome via plan_next_cycle.py.
 
@@ -162,7 +162,7 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
         plan_next_cycle_step.write_implemented(state_dir, implemented_rule_id, cycle_id)
     else:
         # Implementation failed; keep evaluating the still-active rule.
-        plan_next_cycle_step.write_next_cycle_plan(state_dir, plan, analysis, config)
+        plan_next_cycle_step.write_next_cycle_plan(state_dir, plan, analysis, cycle_id, config)
 
     paths.rule_idea(state_dir).unlink(missing_ok=True)
 

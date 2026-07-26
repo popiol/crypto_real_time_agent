@@ -41,7 +41,7 @@ def get_active_rule(config: AppConfig) -> ModuleType | None:
     """Dynamically import and return the currently active rule module.
 
     Returns None if no rule has been implemented yet (first-ever cycle) —
-    plan.json's rule_id stays null until step7_implement_rule.py's step
+    plan.json's rule_id stays null until step6_implement_rule.py's step
     successfully implements one.
     """
     plan_path = paths.plan(Path(config.state_dir))
