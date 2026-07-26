@@ -3,7 +3,15 @@
 Generates real, executable Python code from the idea step5_generate_idea.py's
 step persisted to data/state/rule_idea.json (new_rule → new folder/v1.py;
 fix → new version alongside the existing one), validating and self-correcting
-syntax errors via an LLM diff loop, then commits the new rule file to git.
+via an LLM diff loop, then commits the new rule file to git.
+
+Validation (_validate) is two-layered: _check_syntax is static (AST-based —
+parses, checks signal() exists, and rejects known hallucinated patterns like
+indicators= misuse or fake position-state access); _smoke_test then actually
+executes the candidate signal() against a real, current MarketData snapshot
+read from the DB, catching runtime errors (e.g. a nonexistent attribute)
+static analysis can't. Either failure's error text is fed back into the next
+_fix_with_diff call so the LLM knows exactly what to fix.
 
 run() is this pipeline.py stage's entry point: it reads rule_idea.json,
 skipping if there's nothing there for the current cycle_id (either step3's
@@ -12,7 +20,7 @@ file from a run where nothing consumed it — either way, not fresh),
 otherwise implements it and records the outcome via plan_next_cycle.py.
 
 Reads:
-  data/state/rule_idea.json
+  data/state/rule_idea.json, data/*.db (hot/warm/cold tiers, for the smoke test)
 Writes:
   src/strategy/rules/<rule_name>/v<N>.py, data/state/plan.json,
   data/state/rule_idea.json (cleared)
@@ -25,12 +33,15 @@ import inspect
 import logging
 import re
 import subprocess
+import traceback
+import types
 from pathlib import Path
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 import src.agent.models as _agent_models
+from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater import plan_next_cycle as plan_next_cycle_step
@@ -134,7 +145,7 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     rule_id, rule_path = next_rule_path(idea)
     implemented_rule_id: str | None = None
     try:
-        implemented = generate_code(idea, rule_id, config.llm_model)
+        implemented = generate_code(idea, rule_id, config)
         rule_path.parent.mkdir(parents=True, exist_ok=True)
         rule_path.write_text(implemented.code, encoding="utf-8")
         commit_and_push(rule_id, implemented.function_name)
@@ -273,6 +284,74 @@ def _find_position_state_access(tree: ast.AST) -> int | None:
     return None
 
 
+def _load_real_market_data(config: AppConfig) -> dict[str, _agent_models.PairData]:
+    """Load the current real hot/warm/cold tiers for every known pair — the same
+    construction run_strategy() uses live — for use as smoke-test input.
+    """
+    pairs = storage.discover_pairs(config)
+    return {
+        pair: _agent_models.PairData(
+            hot=storage.read_ticks(pair, config),
+            warm=storage.read_warm_candles(pair, config),
+            cold=storage.read_cold_months(pair, config),
+        )
+        for pair in pairs
+    }
+
+
+def _smoke_test(code: str, config: AppConfig) -> str | None:
+    """Execute the candidate signal() against a real, current MarketData snapshot.
+
+    Catches the class of bug static analysis cannot: code that parses fine and
+    looks complete but crashes (or misbehaves) the moment it touches real data —
+    e.g. assuming a field/attribute exists on MarketData/PairData that doesn't.
+    Returns an error description, or None if it ran cleanly. Also returns None
+    (rather than failing the candidate) if no real data is available yet to test
+    against, since that's an environment fact, not the code's fault.
+    """
+    try:
+        market_data = _load_real_market_data(config)
+    except Exception:
+        logger.warning("Smoke test: could not load real market data; skipping", exc_info=True)
+        return None
+    if not market_data:
+        logger.warning("Smoke test: no real market data available yet; skipping")
+        return None
+
+    module = types.ModuleType("_rule_candidate")
+    try:
+        exec(compile(code, "<candidate>", "exec"), module.__dict__)
+        signal_fn = module.__dict__["signal"]
+        result = signal_fn(market_data)
+    except Exception as exc:
+        tb_tail = "\n".join(traceback.format_exc().splitlines()[-6:])
+        return (
+            f"signal() raised {type(exc).__name__} when run against real market "
+            f"data ({len(market_data)} pairs, current tier state): {exc}\n{tb_tail}\n"
+            "The code is syntactically valid but crashes against real data — check "
+            "every attribute/field access against the real model definitions given "
+            "above; do not assume a field or method exists without seeing it there."
+        )
+
+    if not isinstance(result, list):
+        return f"signal() must return a list, got {type(result).__name__} instead"
+    bad = next(
+        (s for s in result if not isinstance(s, (_agent_models.BuySignal, _agent_models.SellSignal))),
+        None,
+    )
+    if bad is not None:
+        return f"signal() returned a non-signal item in its list: {type(bad).__name__}"
+    return None
+
+
+def _validate(code: str, config: AppConfig) -> str | None:
+    """Run all validation checks in order; return the first failure, or None if clean."""
+    error = _check_syntax(code)
+    if error is not None:
+        return error
+    return _smoke_test(code, config)
+
+
 def _load_target_source(target_rule: str) -> str | None:
     """Return the source of the rule being modified, or None if unavailable."""
     m = re.match(r"^(.+)_(v\d+)$", target_rule)
@@ -324,14 +403,15 @@ def _initial_code(idea: RuleIdea, llm: BaseChatModel) -> str:
     return code
 
 
-def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
-    """Ask the LLM for a diff to complete/fix `code`, then apply it."""
+def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel, error: str) -> str:
+    """Ask the LLM for a diff that fixes `error` in `code`, then apply it."""
     structured = llm.with_structured_output(CodeDiff)
     user_prompt = (
         f"Idea:\n{idea.model_dump_json(indent=2)}\n\n"
         f"Available data models:\n{_MODELS_SOURCE}\n\n"
         f"Reference rule structure:\n{_REFERENCE_RULE}\n\n"
         "Entry-point function name: signal\n\n"
+        f"Validation error to fix:\n{error}\n\n"
         f"Partial implementation to complete:\n{code}"
     )
     try:
@@ -349,15 +429,15 @@ def _fix_with_diff(code: str, idea: RuleIdea, llm: BaseChatModel) -> str:
         return code
 
 
-def generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
-    llm = make_llm(model)
+def generate_code(idea: RuleIdea, rule_id: str, config: AppConfig) -> ImplementedRule:
+    llm = make_llm(config.llm_model)
 
     logger.info("Generating initial code for idea '%s' (%s)", idea.title, idea.idea_id)
     code = _initial_code(idea, llm)
     logger.debug("Initial code (%d chars):\n%s", len(code), code)
 
     for attempt in range(_MAX_FIX_ATTEMPTS):
-        error = _check_syntax(code)
+        error = _validate(code, config)
         if error is None:
             logger.info("Code passed validation after %d fix attempt(s)", attempt)
             break
@@ -368,12 +448,12 @@ def generate_code(idea: RuleIdea, rule_id: str, model: str) -> ImplementedRule:
             error,
             code,
         )
-        code = _fix_with_diff(code, idea, llm)
+        code = _fix_with_diff(code, idea, llm, error)
         logger.debug(
             "Code after fix attempt %d (%d chars):\n%s", attempt + 1, len(code), code
         )
     else:
-        error = _check_syntax(code)
+        error = _validate(code, config)
         if error is not None:
             logger.error(
                 "Code still failing after %d fix attempts: %s\nCode:\n%s",

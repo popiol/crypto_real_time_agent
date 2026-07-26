@@ -54,7 +54,7 @@ def test_fix_loop_recovers_from_truncation() -> None:
         if error is None:
             break
         print(f"Fix attempt {attempt + 1}: {error}")
-        current = _fix_with_diff(current, _IDEA, llm)
+        current = _fix_with_diff(current, _IDEA, llm, error)
         print(f"After fix attempt {attempt + 1}, code length: {len(current)}")
         print(current)
     else:

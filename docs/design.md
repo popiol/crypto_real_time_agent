@@ -137,6 +137,8 @@ Exactly one rule is active at a time. The active rule is *state*, not code: `fin
 
 **Long-only.** `BuySignal` opens a long position; `SellSignal` may only be used to close an *existing* long for the same pair — never as a standalone bearish/short entry hypothesis. Nothing in the signal evaluator (§7), portfolio (§10), or scoring (§8.2 Step 1) resolves outcomes for a sell-direction entry — `evaluator.py` only ever queries `direction='buy'` rows, so a rule whose primary hypothesis is "detect a bearish setup, emit SellSignal" accumulates signals that never resolve, forever, with nothing surfacing the failure (the "actively firing, none resolved yet" continue-branch in "Plan next cycle" has no way to distinguish that from a rule that simply hasn't had time yet). Enforced by prompting the generating LLM explicitly (§8.2 Steps 5-6), since nothing downstream can recover from a rule that violates it.
 
+**No position visibility.** `signal(data: MarketData)` receives only market data — there is no way for a rule to see its own currently-open positions, an entry price, or how long a position has been held; `signal()` is a pure function called fresh each cycle with no memory between calls. `portfolio.py`'s `_place_sell()` matches a `SellSignal` to an open position by pair alone, so a rule never needs an entry price to close one. Exit logic must therefore be expressed purely from market data (an indicator reversing, a time/candle-count condition) — never as a percentage move relative to an assumed entry price. Enforced the same way as the other two constraints above (§8.2 Steps 5-6).
+
 Directory layout:
 
 ```
@@ -292,6 +294,12 @@ The LLM generates exactly one idea per cycle, derived from the relation analysis
 *Output*: new rule version file under `strategy/rules/`, `data/state/plan.json` (updated), `data/state/rule_idea.json` (cleared)
 
 Generates real, executable Python code from the idea persisted in step 5. Exactly one rule version is added per pipeline run, and it becomes the sole active rule by being written to `plan.json`, replacing whichever rule was previously active. The previous version's file is kept under `strategy/rules/` for signal traceability but is no longer imported or executed. Also records the cycle's outcome via "Plan next cycle" below — either `action: continue` for the newly-implemented rule, or (if implementation failed) a fresh diagnosis for the still-active rule.
+
+Candidate code is validated in two layers before being accepted, up to 10 fix attempts, each layer's error fed back into the next `_fix_with_diff` call so the LLM knows exactly what to fix (not just that something is wrong):
+1. **Static** (`_check_syntax`, AST-based) — parses, confirms `signal()` exists and returns, and rejects known hallucinated patterns by construction: passing `indicators=` to `BuySignal`/`SellSignal` (§5.2's field constraints), or accessing a nonexistent `.positions`/`.portfolio`/`.holdings` attribute (§5.2's "No position visibility").
+2. **Smoke test** (`_smoke_test`) — actually executes the candidate `signal()` against a real, current `MarketData` snapshot loaded from the DB (same construction as `run_strategy()`'s live path), catching runtime errors static analysis can't (e.g. an attribute-access mistake unrelated to the two hallucinations already guarded against, like assuming `data.warm` is a wrapper object instead of the `list[WarmCandle]` it actually is). Skipped (not a pass, not a fail — just not run) if no real data is available yet, rather than blocking implementation on an environment fact.
+
+The three hard constraints (data tier limits, long-only, no position visibility — §5.2) live in `rule_constraints.py` and are shared verbatim across idea generation (step 5), code generation/fixing (this step), and failure diagnosis ("Plan next cycle" below), so a diagnosis never prescribes a fix (e.g. an entry-price-relative stop-loss) that the implementation step would then have to reject.
 
 #### Plan next cycle
 *(not one of the 6 numbered steps — `plan_next_cycle.py` is called from step 3, step 5's failure path, and step 6, not once in sequence)*
