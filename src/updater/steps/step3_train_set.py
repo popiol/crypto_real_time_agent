@@ -1,4 +1,5 @@
-"""Train set step — append one sample per evaluated signal to train_set.json.
+"""Update train set — design.md §8.2 Step 3. Appends one sample per
+evaluated signal to train_set.json.
 
 For each signal that now has an evaluated outcome, appends a TrainSample
 using the indicator values already captured on the signal at emission time

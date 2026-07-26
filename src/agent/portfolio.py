@@ -2,7 +2,7 @@
 
 Runs on every data pull cycle:
   1. Fill any pending orders whose limit price has been reached.
-  2. Check whether the active rule (last_implemented.json) clears the
+  2. Check whether the active rule (plan.json's rule_id) clears the
      configured recent-gain threshold in rule_evaluation.json.
   3. If it does, place new orders from its signals (buy 1/10 of current
      capital per signal).
@@ -19,6 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from src.agent.models import AppConfig, BuySignal, SellSignal, Tick
+from src.updater import paths as _updater_paths
 
 logger = logging.getLogger(__name__)
 
@@ -333,15 +334,15 @@ def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
     rule_evaluation.json", which now accumulates history for every rule
     ever evaluated, not just the current one.
     """
-    last_implemented_path = Path(state_dir) / "last_implemented.json"
-    if not last_implemented_path.exists():
+    plan_path = _updater_paths.plan(Path(state_dir))
+    if not plan_path.exists():
         return None
     try:
-        active_rule_id = json.loads(
-            last_implemented_path.read_text(encoding="utf-8")
-        )["rule_id"]
+        active_rule_id = json.loads(plan_path.read_text(encoding="utf-8"))["rule_id"]
     except Exception:
-        logger.warning("Could not read last_implemented.json for portfolio", exc_info=True)
+        logger.warning("Could not read plan.json for portfolio", exc_info=True)
+        return None
+    if active_rule_id is None:
         return None
 
     rule_eval_path = Path(state_dir) / "rule_evaluation.json"

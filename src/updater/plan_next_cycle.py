@@ -1,29 +1,31 @@
-"""Plan next cycle — design.md §8.2 Step 9.
+"""Plan next cycle — design.md §8.2.
 
 Evaluates the currently active rule's latest score and decides the plan for
 the next cycle: 'continue' if it's performing, otherwise an LLM diagnosis of
 whether the failure is fixable ('fix', with a specific change to attempt) or
 fundamental ('new_rule', with a fresh direction to explore).
 
-Also owns last_implemented.json, the {rule_id, cycle_id} record that IS the
-active rule (see strategy.py's get_active_rule) — written whenever a new rule
-is implemented, and read back here to know which rule to evaluate.
+Also owns plan.json's rule_id/cycle_id — the record that IS the active rule
+(see strategy.py's get_active_rule) — written whenever a new rule is
+implemented, and read back here to know which rule to evaluate.
 
-Not a pipeline.py stage in its own right: it consumes the RelationAnalysis
-produced in-memory by relation_analysis.py in the same run (used only for
-extra context in the failure diagnosis), so this module is called directly
-from step7_implement_idea.py's orchestrator.
+Not a pipeline.py stage in its own right, and not one of the 7 numbered
+steps — this logic runs at three different points across them, not once in
+sequence:
+  - step5_relation_analysis.py — continue re-check before deciding whether
+    to bother analysing anything this cycle
+  - step6_generate_idea.py — failure fallback if idea generation fails
+  - step7_implement_rule.py — recording a successful implementation, or the
+    failure fallback if implementation fails
 
 Reads:
   data/state/rule_evaluation.json   — the active rule's score
 Writes:
-  data/state/last_implemented.json
-  data/state/next_cycle_plan.json
+  data/state/plan.json
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 from typing import Literal
@@ -33,7 +35,7 @@ from pydantic import BaseModel, Field
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.llm import llm_structured
-from src.updater.models import NextCyclePlan, RelationAnalysis, RuleEvaluation, RuleScore
+from src.updater.models import Plan, RelationAnalysis, RuleEvaluation, RuleScore
 
 logger = logging.getLogger(__name__)
 
@@ -61,38 +63,29 @@ class _CycleOutcomeDiagnosis(BaseModel):
     )
 
 
-def load_current_plan(state_dir: Path) -> NextCyclePlan:
-    path = paths.next_cycle_plan(state_dir)
+def load_plan(state_dir: Path) -> Plan:
+    path = paths.plan(state_dir)
     if not path.exists():
-        return NextCyclePlan(action="new_rule", description=None)
+        return Plan(action="new_rule")
     try:
-        return NextCyclePlan.model_validate_json(path.read_text(encoding="utf-8"))
+        return Plan.model_validate_json(path.read_text(encoding="utf-8"))
     except Exception:
-        logger.warning("Could not parse next_cycle_plan.json; treating as new_rule")
-        return NextCyclePlan(action="new_rule", description=None)
+        logger.warning("Could not parse plan.json; treating as new_rule")
+        return Plan(action="new_rule")
 
 
-def load_last_implemented(state_dir: Path) -> tuple[str | None, str | None]:
-    path = paths.last_implemented(state_dir)
-    if not path.exists():
-        return None, None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data.get("rule_id"), data.get("cycle_id")
-    except Exception:
-        logger.warning("Could not read last_implemented.json", exc_info=True)
-        return None, None
-
-
-def write_last_implemented(state_dir: Path, rule_id: str, cycle_id: str) -> None:
-    path = paths.last_implemented(state_dir)
-    path.write_text(
-        json.dumps({"rule_id": rule_id, "cycle_id": cycle_id}, indent=2),
-        encoding="utf-8",
-    )
+def write_implemented(state_dir: Path, rule_id: str, cycle_id: str) -> Plan:
+    """Record a newly implemented rule as the active one. Nothing to evaluate
+    yet, so the plan for next cycle starts at 'continue'.
+    """
+    plan = Plan(rule_id=rule_id, cycle_id=cycle_id, action="continue", description=None)
+    paths.plan(state_dir).write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     logger.info(
-        "last_implemented.json written: rule_id=%s cycle_id=%s", rule_id, cycle_id
+        "plan.json written: rule_id=%s cycle_id=%s action=continue (just implemented)",
+        rule_id,
+        cycle_id,
     )
+    return plan
 
 
 def get_rule_score(state_dir: Path, rule_id: str) -> RuleScore | None:
@@ -135,44 +128,36 @@ def _diagnose_failure(
     )
 
 
-def write_continue_plan(state_dir: Path, rule_id: str) -> NextCyclePlan:
-    """Write a plain 'continue' plan — used when a new rule just took over and
-    hasn't had any chance yet to prove itself, so there's nothing to evaluate.
-    """
-    plan = NextCyclePlan(action="continue", description=None)
-    paths.next_cycle_plan(state_dir).write_text(
-        plan.model_dump_json(indent=2), encoding="utf-8"
-    )
-    logger.info(
-        "next_cycle_plan.json written: action=continue (rule %s just implemented)",
-        rule_id,
-    )
-    return plan
-
-
 def write_next_cycle_plan(
     state_dir: Path,
-    last_rule_id: str | None,
+    current: Plan,
     analysis: RelationAnalysis,
     config: AppConfig,
-) -> NextCyclePlan:
-    plan_path = paths.next_cycle_plan(state_dir)
+) -> Plan:
+    """Re-evaluate current.rule_id and decide the plan for next cycle,
+    preserving rule_id/cycle_id (the active rule doesn't change here — only
+    implement_rule.py's step does that, via write_implemented).
+    """
+    plan_path = paths.plan(state_dir)
 
-    if last_rule_id is None:
-        # First cycle: no previous rule to evaluate
-        plan = NextCyclePlan(action="continue", description=None)
+    def _write(action: Literal["continue", "fix", "new_rule"], description: str | None) -> Plan:
+        plan = current.model_copy(update={"action": action, "description": description})
         plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
-        logger.info("next_cycle_plan.json written: action=continue (first cycle)")
         return plan
 
-    rule_score = get_rule_score(state_dir, last_rule_id)
+    if current.rule_id is None:
+        # First cycle: no previous rule to evaluate
+        plan = _write("continue", None)
+        logger.info("plan.json written: action=continue (first cycle)")
+        return plan
+
+    rule_score = get_rule_score(state_dir, current.rule_id)
     if rule_score is None:
         # No entry yet — nothing to judge.
-        plan = NextCyclePlan(action="continue", description=None)
-        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        plan = _write("continue", None)
         logger.info(
-            "next_cycle_plan.json written: action=continue (rule %s not yet evaluated)",
-            last_rule_id,
+            "plan.json written: action=continue (rule %s not yet evaluated)",
+            current.rule_id,
         )
         return plan
 
@@ -185,23 +170,21 @@ def write_next_cycle_plan(
         # before it ever gets a fair look. If it genuinely never emits any
         # signal at all (emitted_signal_count == 0), fall through instead —
         # that's a real failure, not a timing artifact.
-        plan = NextCyclePlan(action="continue", description=None)
-        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        plan = _write("continue", None)
         logger.info(
-            "next_cycle_plan.json written: action=continue (rule %s has %d emitted "
+            "plan.json written: action=continue (rule %s has %d emitted "
             "signal(s), none evaluated yet)",
-            last_rule_id,
+            current.rule_id,
             rule_score.emitted_signal_count,
         )
         return plan
 
     metric_value, metric_name = _performance_metric(rule_score)
     if metric_value > config.cycle_success_threshold:
-        plan = NextCyclePlan(action="continue", description=None)
-        plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
+        plan = _write("continue", None)
         logger.info(
-            "next_cycle_plan.json written: action=continue (rule %s %s=%.4f > threshold)",
-            last_rule_id,
+            "plan.json written: action=continue (rule %s %s=%.4f > threshold)",
+            current.rule_id,
             metric_name,
             metric_value,
         )
@@ -210,19 +193,18 @@ def write_next_cycle_plan(
     # Failure: ask LLM to diagnose fix vs new_rule
     try:
         diagnosis = _diagnose_failure(rule_score, analysis, config)
-        plan = NextCyclePlan(action=diagnosis.action, description=diagnosis.description)
+        plan = _write(diagnosis.action, diagnosis.description)
     except Exception:
         logger.exception("Failure diagnosis LLM call failed; defaulting to new_rule")
-        plan = NextCyclePlan(
-            action="new_rule",
-            description=f"Rule {last_rule_id} underperformed ({metric_name}={metric_value:.4f}); explore a new direction.",
+        plan = _write(
+            "new_rule",
+            f"Rule {current.rule_id} underperformed ({metric_name}={metric_value:.4f}); explore a new direction.",
         )
 
-    plan_path.write_text(plan.model_dump_json(indent=2), encoding="utf-8")
     logger.info(
-        "next_cycle_plan.json written: action=%s (rule %s %s=%.4f) — %s",
+        "plan.json written: action=%s (rule %s %s=%.4f) — %s",
         plan.action,
-        last_rule_id,
+        current.rule_id,
         metric_name,
         metric_value,
         plan.description,

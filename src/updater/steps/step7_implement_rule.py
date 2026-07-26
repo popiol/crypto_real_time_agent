@@ -1,15 +1,21 @@
-"""Implement rule — design.md §8.2 Step 5.
+"""Implement rule — design.md §8.2 Step 7.
 
-Generates real, executable Python code from the idea produced by
-generate_idea.py (new_rule → new folder/v1.py; fix → new version alongside
-the existing one), validating and self-correcting syntax errors via an LLM
-diff loop, then commits the new rule file to git.
+Generates real, executable Python code from the idea step6_generate_idea.py's
+step persisted to data/state/rule_idea.json (new_rule → new folder/v1.py;
+fix → new version alongside the existing one), validating and self-correcting
+syntax errors via an LLM diff loop, then commits the new rule file to git.
 
-Not a pipeline.py stage in its own right: it consumes the RuleIdea produced
-in-memory by generate_idea.py in the same run, so this module is called
-directly from step7_implement_idea.py's orchestrator.
+run() is this pipeline.py stage's entry point: it reads rule_idea.json,
+skipping if there's nothing there for the current cycle_id (either step5's
+run decided action=continue and step6 never produced an idea, or a stale
+file from a run where nothing consumed it — either way, not fresh),
+otherwise implements it and records the outcome via plan_next_cycle.py.
 
-Writes: src/strategy/rules/<rule_name>/v<N>.py
+Reads:
+  data/state/rule_idea.json
+Writes:
+  src/strategy/rules/<rule_name>/v<N>.py, data/state/plan.json,
+  data/state/rule_idea.json (cleared)
 """
 
 from __future__ import annotations
@@ -25,9 +31,12 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
 import src.agent.models as _agent_models
+from src.agent.models import AppConfig
+from src.updater import paths
+from src.updater import plan_next_cycle as plan_next_cycle_step
 from src.updater.code_diff import CodeDiff, apply_changes
 from src.updater.llm import make_llm
-from src.updater.models import ImplementedRule, RuleIdea
+from src.updater.models import ImplementedRule, PendingRuleIdea, RuleIdea
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +131,59 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
 
 class ImplementationFailed(Exception):
     pass
+
+
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
+    pending = _load_pending_idea(state_dir, cycle_id)
+    if pending is None:
+        logger.info("No fresh rule idea for this cycle; skipping implementation")
+        return
+    idea, plan, analysis = pending.idea, pending.plan, pending.analysis
+
+    rule_id, rule_path = next_rule_path(idea)
+    implemented_rule_id: str | None = None
+    try:
+        implemented = generate_code(idea, rule_id, config.llm_model)
+        rule_path.parent.mkdir(parents=True, exist_ok=True)
+        rule_path.write_text(implemented.code, encoding="utf-8")
+        commit_and_push(rule_id, implemented.function_name)
+        implemented_rule_id = rule_id
+        logger.info("Implemented rule %s at %s", rule_id, rule_path)
+    except ImplementationFailed:
+        logger.exception("Rule implementation failed for idea '%s'", idea.title)
+
+    if implemented_rule_id:
+        # The new rule just took over and hasn't had a chance to run yet, so
+        # there's nothing to evaluate — do NOT re-diagnose the old rule here.
+        # That plan would only be read next cycle, by which point the active
+        # rule will already be this new one, and a stale "fix" verdict about
+        # its predecessor would get misapplied to it before it ever got a
+        # chance to prove itself.
+        plan_next_cycle_step.write_implemented(state_dir, implemented_rule_id, cycle_id)
+    else:
+        # Implementation failed; keep evaluating the still-active rule.
+        plan_next_cycle_step.write_next_cycle_plan(state_dir, plan, analysis, config)
+
+    paths.rule_idea(state_dir).unlink(missing_ok=True)
+
+
+def _load_pending_idea(state_dir: Path, cycle_id: str) -> PendingRuleIdea | None:
+    path = paths.rule_idea(state_dir)
+    if not path.exists():
+        return None
+    try:
+        pending = PendingRuleIdea.model_validate_json(path.read_text(encoding="utf-8"))
+    except Exception:
+        logger.warning("Could not read rule_idea.json", exc_info=True)
+        return None
+    if pending.cycle_id != cycle_id:
+        logger.info(
+            "rule_idea.json is from cycle %s, not the current cycle %s; skipping",
+            pending.cycle_id,
+            cycle_id,
+        )
+        return None
+    return pending
 
 
 def next_rule_path(idea: RuleIdea) -> tuple[str, Path]:

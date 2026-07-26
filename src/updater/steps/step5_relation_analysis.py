@@ -1,18 +1,19 @@
-"""Relation analysis — design.md §8.2 Step 3.
+"""Relation analysis — design.md §8.2 Step 5.
 
-Retrieves the top-K episodic traces most semantically similar to the current
-cycle plan's description, then makes one LLM call that looks at a sample of
-the accumulated train set (indicator values paired with their resolved
-outcome) and those retrieved traces to identify which indicator patterns
-preceded positive vs. negative outcomes.
-
-Not a pipeline.py stage in its own right: its output (RelationAnalysis) is
-only ever consumed in-memory by generate_idea.py in the same run, so this
-module is called directly from step7_implement_idea.py's orchestrator.
+run() is this pipeline.py stage's entry point: it re-checks the current plan
+fresh (rather than trusting the previous cycle's stale verdict); if the
+active rule is still performing, it stops there and nothing downstream runs
+this cycle. Otherwise it retrieves the top-K episodic traces most
+semantically similar to the current plan's description, then makes one LLM
+call that looks at a sample of the accumulated train set (indicator values
+paired with their resolved outcome) and those traces to identify which
+indicator patterns preceded positive vs. negative outcomes — and persists the
+result for step6_generate_idea.py's step to pick up.
 
 Reads:
-  data/state/train_set.json         — accumulated train samples
-  data/state/traces/                — episodic trace files
+  data/state/plan.json, data/state/train_set.json, data/state/traces/
+Writes:
+  data/state/plan.json (re-checked), data/state/relation_analysis.json
 """
 
 from __future__ import annotations
@@ -23,12 +24,17 @@ from pathlib import Path
 
 from src.agent.models import AppConfig
 from src.updater import paths
+from src.updater import plan_next_cycle as plan_next_cycle_step
 from src.updater.llm import llm_structured
-from src.updater.models import EpisodicTrace, RelationAnalysis, TrainSet
+from src.updater.models import EpisodicTrace, PendingRelationAnalysis, RelationAnalysis, TrainSet
 
 logger = logging.getLogger(__name__)
 
 _MAX_TRAIN_SAMPLES = 100  # cap sent to LLM
+
+_EMPTY_ANALYSIS = RelationAnalysis(
+    positive_patterns=[], negative_patterns=[], key_indicators=[], suggested_direction=""
+)
 
 _RELATION_ANALYSIS_SYSTEM = (
     "You are a quantitative trading analyst. "
@@ -179,3 +185,62 @@ def run_relation_analysis(
         user=user,
         output_type=RelationAnalysis,
     )
+
+
+def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
+    plan = plan_next_cycle_step.load_plan(state_dir)
+
+    if plan.action == "continue":
+        # The plan on disk was decided last cycle — re-check fresh rather than
+        # trust it blindly, since the active rule's score may have moved on.
+        plan = plan_next_cycle_step.write_next_cycle_plan(
+            state_dir, plan, _EMPTY_ANALYSIS, config
+        )
+        if plan.action == "continue":
+            # Exactly one rule can ever be active (see strategy.py), so
+            # running relation analysis here would only ever feed an idea
+            # that proposes replacing a winning rule with an untested one —
+            # leave it running and skip everything downstream this cycle.
+            logger.info(
+                "Cycle plan: action=continue — rule %s is performing; skipping relation analysis",
+                plan.rule_id,
+            )
+            return
+        logger.info(
+            "Rule %s no longer performing (re-checked action=%s); running relation "
+            "analysis this cycle instead of waiting for the next one",
+            plan.rule_id,
+            plan.action,
+        )
+
+    traces = retrieve_top_k_traces(state_dir, plan.description, config)
+    logger.info(
+        "Cycle plan: action=%s%s | retrieved %d trace(s)",
+        plan.action,
+        f" — {plan.description}" if plan.description else "",
+        len(traces),
+    )
+    try:
+        analysis = run_relation_analysis(state_dir, traces, config)
+        logger.info(
+            "Relation analysis: %d positive pattern(s), %d negative pattern(s), "
+            "key_indicators=%s | suggested_direction=%s",
+            len(analysis.positive_patterns),
+            len(analysis.negative_patterns),
+            analysis.key_indicators,
+            analysis.suggested_direction,
+        )
+    except Exception:
+        logger.exception("Relation analysis failed; using empty analysis")
+        analysis = RelationAnalysis(
+            positive_patterns=[],
+            negative_patterns=[],
+            key_indicators=[],
+            suggested_direction="No analysis available — explore a new rule direction.",
+        )
+
+    pending = PendingRelationAnalysis(cycle_id=cycle_id, plan=plan, analysis=analysis)
+    paths.relation_analysis(state_dir).write_text(
+        pending.model_dump_json(indent=2), encoding="utf-8"
+    )
+    logger.info("relation_analysis.json written (cycle_id=%s)", cycle_id)

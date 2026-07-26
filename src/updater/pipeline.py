@@ -23,32 +23,33 @@ from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.steps import (
     step1_indicator_set,
-    step3_analyze_results,
-    step4_analyze_rules,
-    step5_train_set,
-    step6_episodic_trace,
-    step7_implement_idea,
+    step2_evaluate_rule,
+    step3_train_set,
+    step4_episodic_trace,
+    step5_relation_analysis,
+    step6_generate_idea,
+    step7_implement_rule,
 )
 
 logger = logging.getLogger(__name__)
 
 _STEPS: list[tuple[str, Callable]] = [
     ("1 indicator_set", step1_indicator_set.run),
-    ("3 analyze_results", step3_analyze_results.run),
-    ("4 analyze_rules", step4_analyze_rules.run),
-    ("5 train_set", step5_train_set.run),
-    ("6 episodic_trace", step6_episodic_trace.run),
-    ("7 implement_idea", step7_implement_idea.run),
+    ("2 evaluate_rule", step2_evaluate_rule.run),
+    ("3 train_set", step3_train_set.run),
+    ("4 episodic_trace", step4_episodic_trace.run),
+    ("5 relation_analysis", step5_relation_analysis.run),
+    ("6 generate_idea", step6_generate_idea.run),
+    ("7 implement_rule", step7_implement_rule.run),
 ]
 
 
 _STATE_FILES = [
-    paths.SIGNAL_EVALUATION,
     paths.RULE_DESCRIPTIONS,
     paths.RULE_EVALUATION,
     paths.INDICATOR_SET,
     paths.TRAIN_SET,
-    paths.LAST_IMPLEMENTED,
+    paths.PLAN,
 ]
 
 

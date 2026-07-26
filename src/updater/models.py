@@ -7,26 +7,6 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 
-class PairMetrics(BaseModel):
-    pair: str
-    signal_count: int
-    avg_gain_pct: float
-    positive_rate: float
-
-
-class RuleSignalEvaluation(BaseModel):
-    rule_id: str
-    signal_count: int
-    positive_rate: float
-    avg_gain_pct: float
-    by_exit_reason: dict[str, int]
-    by_pair: list[PairMetrics]
-
-
-class SignalEvaluation(BaseModel):
-    rules: list[RuleSignalEvaluation]
-
-
 class RuleDescription(BaseModel):
     rule_id: str
     description: str
@@ -49,8 +29,17 @@ class IndicatorSet(BaseModel):
     updated_at: str
 
 
-class NextCyclePlan(BaseModel):
-    action: Literal["continue", "fix", "new_rule"]
+class Plan(BaseModel):
+    """plan.json — the single source of truth for both "which rule is
+    active" and "what to do next cycle". The two used to be separate files
+    (last_implemented.json, next_cycle_plan.json) but are always read
+    together and rule_id/cycle_id only ever change alongside a fresh
+    action/description, so one record covers both.
+    """
+
+    rule_id: str | None = None
+    cycle_id: str | None = None
+    action: Literal["continue", "fix", "new_rule"] = "new_rule"
     description: str | None = None
 
 
@@ -67,6 +56,18 @@ class RelationAnalysis(BaseModel):
     suggested_direction: str = Field(
         description="Proposed direction for the next rule idea, grounded in the observed patterns"
     )
+
+
+class PendingRelationAnalysis(BaseModel):
+    """relation_analysis.json — step5_relation_analysis.py's output, handed
+    off to step6_generate_idea.py's step. cycle_id lets the reader tell a
+    fresh analysis (produced this same pipeline run) apart from a stale
+    leftover from a run where idea generation never got to consume it.
+    """
+
+    cycle_id: str
+    plan: Plan
+    analysis: RelationAnalysis
 
 
 class TrainSample(BaseModel):
@@ -170,8 +171,17 @@ class RuleIdea(BaseModel):
     status: Literal["proposed", "evaluated", "implemented", "rejected"] = "proposed"
 
 
-class IdeaBacklog(BaseModel):
-    ideas: list[RuleIdea]
+class PendingRuleIdea(BaseModel):
+    """rule_idea.json — the idea step6_generate_idea.py's step produced this
+    cycle, handed off to step7_implement_rule.py's step. cycle_id lets the
+    reader tell a fresh idea (generated this same pipeline run) apart from a
+    stale leftover from a run where implementation never got to consume it.
+    """
+
+    cycle_id: str
+    idea: RuleIdea
+    plan: Plan
+    analysis: RelationAnalysis
 
 
 class ImplementedRule(BaseModel):

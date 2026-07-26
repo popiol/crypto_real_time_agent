@@ -1,4 +1,5 @@
-"""Episodic trace step — write an immutable trace record for the current cycle.
+"""Episodic trace — design.md §8.2 Step 4. Writes an immutable trace record
+for the current cycle.
 
 Traces capture the hypothesis (rule description), outcome metrics, and an
 LLM-generated diagnosis for the most recently evaluated rule. The hypothesis
@@ -8,7 +9,7 @@ Each trace is written to data/state/traces/<cycle_id>.json. Existing files
 are never overwritten.
 
 Reads:
-  data/state/last_implemented.json  — which rule to trace (written by implement step)
+  data/state/plan.json              — which rule to trace (rule_id/cycle_id, written by implement step)
   data/state/rule_evaluation.json   — outcome metrics for that rule
   data/state/indicator_set.json     — current indicator set version
 
@@ -101,21 +102,22 @@ def _resolve_target_rule(
 ) -> tuple[str | None, str]:
     """Return (rule_id, cycle_id) for the rule to trace.
 
-    Uses the cycle_id recorded in last_implemented.json — the cycle that
-    actually implemented this rule, which is always written alongside
-    rule_id (see plan_next_cycle.write_last_implemented). last_implemented.json
-    is the sole source of truth for which rule is active (see strategy.py's
-    get_active_rule): if it's missing, rule_evaluation.json can't hold a
-    trustworthy answer either, since step4_analyze_rules only ever scores
-    whatever this file says is active.
+    Uses the cycle_id recorded in plan.json — the cycle that actually
+    implemented this rule, which is always written alongside rule_id (see
+    plan_next_cycle.write_implemented). plan.json is the sole source of
+    truth for which rule is active (see strategy.py's get_active_rule): if
+    it's missing, rule_evaluation.json can't hold a trustworthy answer
+    either, since step2_evaluate_rule only ever scores whatever this file
+    says is active.
     """
-    last_path = paths.last_implemented(state_dir)
-    if last_path.exists():
+    plan_path = paths.plan(state_dir)
+    if plan_path.exists():
         try:
-            data = json.loads(last_path.read_text(encoding="utf-8"))
-            return data["rule_id"], data["cycle_id"]
+            data = json.loads(plan_path.read_text(encoding="utf-8"))
+            if data.get("rule_id") is not None:
+                return data["rule_id"], data["cycle_id"]
         except Exception:
-            logger.warning("Could not read last_implemented.json", exc_info=True)
+            logger.warning("Could not read plan.json", exc_info=True)
 
     return None, cycle_id
 

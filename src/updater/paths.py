@@ -10,15 +10,14 @@ from __future__ import annotations
 from pathlib import Path
 
 INDICATOR_SET = "indicator_set.json"
-NEXT_CYCLE_PLAN = "next_cycle_plan.json"
-SIGNAL_EVALUATION = "signal_evaluation.json"
+PLAN = "plan.json"
 RULE_EVALUATION = "rule_evaluation.json"
 RULE_DESCRIPTIONS = "rule_descriptions.json"
 VERSION_COMPARISON = "version_comparison.json"
 TRAIN_SET = "train_set.json"
-LAST_IMPLEMENTED = "last_implemented.json"
 CONCLUSIONS = "conclusions.json"
-IDEA_BACKLOG = "idea_backlog.json"
+RELATION_ANALYSIS = "relation_analysis.json"
+RULE_IDEA = "rule_idea.json"
 LONG_TERM_PLAN = "long_term_plan.json"
 
 
@@ -26,12 +25,8 @@ def indicator_set(state_dir: Path) -> Path:
     return state_dir / INDICATOR_SET
 
 
-def next_cycle_plan(state_dir: Path) -> Path:
-    return state_dir / NEXT_CYCLE_PLAN
-
-
-def signal_evaluation(state_dir: Path) -> Path:
-    return state_dir / SIGNAL_EVALUATION
+def plan(state_dir: Path) -> Path:
+    return state_dir / PLAN
 
 
 def rule_evaluation(state_dir: Path) -> Path:
@@ -46,16 +41,16 @@ def train_set(state_dir: Path) -> Path:
     return state_dir / TRAIN_SET
 
 
-def last_implemented(state_dir: Path) -> Path:
-    return state_dir / LAST_IMPLEMENTED
-
-
 def conclusions(state_dir: Path) -> Path:
     return state_dir / CONCLUSIONS
 
 
-def idea_backlog(state_dir: Path) -> Path:
-    return state_dir / IDEA_BACKLOG
+def relation_analysis(state_dir: Path) -> Path:
+    return state_dir / RELATION_ANALYSIS
+
+
+def rule_idea(state_dir: Path) -> Path:
+    return state_dir / RULE_IDEA
 
 
 def long_term_plan(state_dir: Path) -> Path:

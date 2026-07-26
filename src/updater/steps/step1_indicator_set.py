@@ -1,7 +1,8 @@
-"""Indicator set step — update or bootstrap the LLM-defined indicator set.
+"""Update indicator set — design.md §8.2 Step 1. Updates or bootstraps the
+LLM-defined indicator set.
 
-Skipped when next_cycle_plan.json has action='continue' and indicator_set.json
-already exists (previous cycle succeeded; no need to change what we measure).
+Skipped when plan.json has action='continue' and indicator_set.json already
+exists (previous cycle succeeded; no need to change what we measure).
 
 On first run (no indicator_set.json) or on failure cycles (action='fix' or
 'new_rule'), the process is two-phase:
@@ -33,7 +34,7 @@ from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.code_diff import CodeDiff, apply_changes
 from src.updater.llm import llm_structured, make_llm
-from src.updater.models import Indicator, IndicatorSet, NextCyclePlan
+from src.updater.models import Indicator, IndicatorSet, Plan
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class _IndicatorSpecList(BaseModel):
 
 def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
     set_path = paths.indicator_set(state_dir)
-    plan_path = paths.next_cycle_plan(state_dir)
+    plan_path = paths.plan(state_dir)
 
     bootstrap = not set_path.exists()
     if bootstrap:
@@ -141,10 +142,10 @@ def _read_plan(plan_path: Path) -> tuple[str, str | None]:
     if not plan_path.exists():
         return "new_rule", None
     try:
-        plan = NextCyclePlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+        plan = Plan.model_validate_json(plan_path.read_text(encoding="utf-8"))
         return plan.action, plan.description
     except Exception:
-        logger.warning("Could not parse next_cycle_plan.json; treating as new_rule")
+        logger.warning("Could not parse plan.json; treating as new_rule")
         return "new_rule", None
 
 

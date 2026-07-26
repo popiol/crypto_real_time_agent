@@ -1,17 +1,17 @@
 """Strategy engine — signal detection.
 
 find_signals() is the only public entry point. It resolves the currently
-active rule from persisted state (data/state/last_implemented.json) and
-calls signal(data) on it.
+active rule from persisted state (data/state/plan.json's rule_id) and calls
+signal(data) on it.
 
 Exactly one rule is active at a time, matching the Strategy Updater's
 one-hypothesis-per-cycle learning loop: each cycle either fixes the current
 rule (a new version replaces it) or replaces it outright with a new rule
 concept. The active rule is *state*, not code: the Strategy Updater never
-edits this file — it only writes last_implemented.json, and the rule module
-is imported dynamically from there on every call. Previous rule files are
-kept on disk under strategy/rules/ for signal traceability but are no
-longer executed once replaced.
+edits this file — it only writes plan.json, and the rule module is imported
+dynamically from there on every call. Previous rule files are kept on disk
+under strategy/rules/ for signal traceability but are no longer executed
+once replaced.
 """
 
 from __future__ import annotations
@@ -40,15 +40,19 @@ def rule_id_to_import_path(rule_id: str) -> str:
 def get_active_rule(config: AppConfig) -> ModuleType | None:
     """Dynamically import and return the currently active rule module.
 
-    Returns None if no rule has been implemented yet (first-ever cycle).
+    Returns None if no rule has been implemented yet (first-ever cycle) —
+    plan.json's rule_id stays null until step7_implement_rule.py's step
+    successfully implements one.
     """
-    last_path = paths.last_implemented(Path(config.state_dir))
-    if not last_path.exists():
+    plan_path = paths.plan(Path(config.state_dir))
+    if not plan_path.exists():
         return None
     try:
-        rule_id = json.loads(last_path.read_text(encoding="utf-8"))["rule_id"]
+        rule_id = json.loads(plan_path.read_text(encoding="utf-8"))["rule_id"]
     except Exception:
-        logger.warning("Could not read last_implemented.json for active rule", exc_info=True)
+        logger.warning("Could not read plan.json for active rule", exc_info=True)
+        return None
+    if rule_id is None:
         return None
     import_path = rule_id_to_import_path(rule_id)
     try:
