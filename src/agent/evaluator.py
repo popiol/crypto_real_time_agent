@@ -2,10 +2,13 @@
 
 Runs every hour. Evaluates pending buy signals:
   1. Sell signal match — exit price = sell signal price (treated as fill price).
-  2. Timeout — if no sell signal after 20 days, exit price = latest warm candle close.
+  2. Timeout — if no sell signal after 24 hours, exit price = latest warm candle close.
 
 Also tracks 24h metrics (gain_24h_pct, max_gain_24h_pct) while warm candles
 still cover the 24h window after signal emission (i.e. when signal is 24-48h old).
+This portfolio-independent timeout only affects signal-ledger evaluation, not
+the portfolio's own stale-position auto-close (portfolio.py, also 24h but
+tracked separately via each position's opened_at).
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from src.agent.models import AppConfig
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = timedelta(days=20)
+_TIMEOUT = timedelta(hours=24)
 _24H = timedelta(hours=24)
 _24H_GRACE = timedelta(hours=48)
 

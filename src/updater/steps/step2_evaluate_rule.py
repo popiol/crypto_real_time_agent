@@ -202,9 +202,10 @@ def _signal_trend(weekly: list[int]) -> str:
 
 def _gain(s: dict) -> float | None:
     """Return a signal's gain: the final settled gain_pct if it has resolved
-    (sell-match or 20-day timeout), else the much-faster-resolving
-    gain_24h_pct (see storage.read_signals). Prefer the final result once
-    it exists; it reflects the rule's real exit, not a fixed 24h snapshot.
+    (sell-match or 24h timeout), else gain_24h_pct (see storage.read_signals)
+    for the rare case only the fixed 24h snapshot is available yet. Prefer
+    the final result once it exists; it reflects the rule's real exit, not
+    a fixed 24h snapshot.
     """
     outcome = s.get("outcome") or {}
     gain_pct = outcome.get("gain_pct")

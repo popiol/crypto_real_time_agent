@@ -171,7 +171,7 @@ Every buy signal emitted by the strategy is written to a persistent ledger — t
 }
 ```
 
-`indicators` is a snapshot of every current indicator's value against the pair's tier data *at the moment the signal was created* (`src/agent/loop.py`, right after `find_signals()` returns) — not recomputed later. A signal can take up to 20 days to resolve (§7), long after `data.warm`'s 24-hour window has rolled past the market state that actually produced it, so this is the only point where a causally-correct reading is available.
+`indicators` is a snapshot of every current indicator's value against the pair's tier data *at the moment the signal was created* (`src/agent/loop.py`, right after `find_signals()` returns) — not recomputed later. A signal takes up to ~24h to resolve (§7), by which point `data.warm`'s 24-hour rolling window has already moved partway past the market state that actually produced it, so this is the only point where a causally-correct reading is available.
 
 ### 6.2 Outcome record
 
@@ -191,7 +191,7 @@ The two outcome fields resolve independently, on very different timelines, and `
 ```
 
 - `gain_24h_pct` / `max_gain_24h_pct` — a fixed 24h-later price read, resolved once a signal is 24-48h old regardless of whether a real exit has happened. Available for the vast majority of evaluated signals within roughly a day.
-- `evaluated_at` / `exit_price` / `exit_reason` / `gain_pct` — the final settled outcome: either a matching opposite-direction signal for the same pair, or a 20-day timeout (§7). Only present once one of those actually happens.
+- `evaluated_at` / `exit_price` / `exit_reason` / `gain_pct` — the final settled outcome: either a matching opposite-direction signal for the same pair, or a 24h timeout (§7). Only present once one of those actually happens.
 
 A signal can have `gain_24h_pct` set and `gain_pct` absent for a long time — that's the normal case, not a partial/broken record. Code that needs "is there anything to judge yet" should check `outcome is not None`; code that specifically needs the final settled result should check `outcome.get("gain_pct") is not None`.
 
@@ -206,7 +206,7 @@ A signal can have `gain_24h_pct` set and `gain_pct` absent for a long time — t
 A background job runs every hour and resolves two independent outcome fields per pending buy signal:
 
 1. **24h read** (`gain_24h_pct`, `max_gain_24h_pct`): once a signal is 24-48h old, reconstructs prices from the warm tier over that window and writes both fields. This does not require a sell signal or any exit to have happened — it's a fixed snapshot.
-2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or by a 20-day timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since rules can be replaced roughly daily (§8.2 "Plan next cycle"), most signals never reach this — the 24h read is what the rest of the system (§8.2 Step 2) actually relies on in practice.
+2. **Final outcome** (`gain_pct`, `exit_price`, `exit_reason`, `evaluated_at`): resolved either by a matching opposite-direction signal for the same pair emitted after it (`exit_reason: "sell_signal"`), or — once nothing has matched by 24h — by a timeout using the latest warm-tier close (`exit_reason: "timeout"`). Since this timeout is deliberately as short as the 24h read (not the 20-day ceiling used earlier), almost every signal reaches a final settled outcome within about a day, rather than staying in 24h-snapshot-only limbo for the rest of its (usually much shorter) lifetime — §8.2 Step 2 prefers `gain_pct` once it exists and only falls back to `gain_24h_pct` in the brief window before it does.
 
 ---
 
@@ -230,7 +230,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 
 All steps that involve reasoning use the LLM (see section 9). Each step reads its inputs from persisted files and writes its output before the pipeline moves on, making the whole run resumable and auditable. The pipeline runs every 24 hours.
 
-The 6 steps below are numbered by `pipeline.py`'s actual call order — every physical filename carries the same number (`stepN_...py`), so there is exactly one numbering scheme, visible from the filename alone. `plan_next_cycle.py` is not one of the 6: its decision logic runs at multiple points across them (a re-check at the start of step 4, and outcome-recording in steps 5 and 6), so it doesn't fit a single numbered slot — see the unnumbered subsection at the end of this list. There is no dedicated "write episodic trace" step either — that used to be its own step, but it only ever ran on the first cycle after a rule was implemented, when no signal could possibly have resolved yet (resolution takes 24h-20 days), so every trace ever written showed zero signals. Trace-writing now happens inside "Plan next cycle," at the moment a rule is actually retired, capturing its real final performance instead.
+The 6 steps below are numbered by `pipeline.py`'s actual call order — every physical filename carries the same number (`stepN_...py`), so there is exactly one numbering scheme, visible from the filename alone. `plan_next_cycle.py` is not one of the 6: its decision logic runs at multiple points across them (a re-check at the start of step 4, and outcome-recording in steps 5 and 6), so it doesn't fit a single numbered slot — see the unnumbered subsection at the end of this list. There is no dedicated "write episodic trace" step either — that used to be its own step, but it only ever ran on the first cycle after a rule was implemented, when no signal could possibly have resolved yet (resolution takes ~24h), so every trace ever written showed zero signals. Trace-writing now happens inside "Plan next cycle," at the moment a rule is actually retired, capturing its real final performance instead.
 
 #### Step 1 — Update indicator set
 *Inputs*: `data/state/plan.json`, `data/state/indicator_set.json`  
@@ -255,7 +255,7 @@ Computes metrics for the currently active rule:
 - `score` — composite score normalised to [0, 1]
 - `description` — a plain-language description of the rule, generated once per version and cached in `rule_evaluation.json` across runs
 
-`rule_evaluation.json` accumulates one entry per rule ever evaluated: the active rule's entry is refreshed each cycle; every other rule_id's entry is carried over unchanged from whenever it was last active. There is no `status` field — whether to keep or replace the active rule is decided purely from `recent_avg_gain_pct + avg_transaction_gain` (see "Plan next cycle" below), not from a separate classification.
+`rule_evaluation.json` accumulates one entry per rule ever evaluated: the active rule's entry is refreshed each cycle; every other rule_id's entry is carried over unchanged from whenever it was last active. There is no `status` field — whether to keep or replace the active rule is decided purely from `recent_avg_gain_pct` (see "Plan next cycle" below), not from a separate classification.
 
 #### Step 3 — Update train set
 *Inputs*: signal ledger (signals newly resolved this cycle, with their `indicators` captured at emission time, §6.1)  
@@ -291,12 +291,10 @@ Generates real, executable Python code from the idea persisted in step 5. Exactl
 *(not one of the 6 numbered steps — `plan_next_cycle.py` is called from step 4, step 5's failure path, and step 6, not once in sequence)*
 
 Decision logic, evaluated fresh every cycle against whichever rule is currently active:
-- If `rule_evaluation.json` has no entry for the rule yet, or the rule has zero *evaluated* signals (`signal_count == 0`) but is actively emitting them (`emitted_signal_count > 0`): `action: continue` — nothing to judge yet, since a signal can only resolve via a matching opposite-direction signal or a 20-day timeout (§7), and treating an unresolved rule as 0% gain would replace every rule before it ever gets a fair look.
+- If `rule_evaluation.json` has no entry for the rule yet, or the rule has zero *evaluated* signals (`signal_count == 0`) but is actively emitting them (`emitted_signal_count > 0`): `action: continue` — nothing to judge yet, since a signal can only resolve via a matching opposite-direction signal or a 24h timeout (§7), and treating an unresolved rule as 0% gain would replace every rule before it ever gets a fair look.
 - If the rule genuinely never emits any signal at all (`signal_count == 0` and `emitted_signal_count == 0`): falls through to the check below like any other rule — this is a real failure (e.g. an indicator window exceeding the 24-candle warm-tier cap, §5.2), not a timing artifact, and should be diagnosed and replaced.
-- Otherwise, the metric judged depends on `transaction_count`, the number of transactions the portfolio has actually closed for the rule:
-  - Below 10 transactions: `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3). With few real trades, blending in the signal-theoretical figure gives a less noisy read; it degrades gracefully to just `recent_avg_gain_pct` while `transaction_count` is `0`, since `avg_transaction_gain` is `0.0` by construction until then.
-  - At 10 or more: `avg_transaction_gain` alone. With enough real trades to be a trustworthy sample, the realized result is trusted exclusively — a rule with a rosy theoretical `recent_avg_gain_pct` but real losses no longer gets a pass.
-  - If that metric > 0.5%: `action: continue` — leave the indicator set and the active rule alone.
+- Otherwise, the metric judged is `recent_avg_gain_pct` (last 48h of signal-theoretical gains, §8.2 Step 2) alone — not blended with `avg_transaction_gain` (the portfolio's own trading gate, §10.3, still uses the combined formula; this decision no longer does).
+  - If `recent_avg_gain_pct` > 0.5%: `action: continue` — leave the indicator set and the active rule alone.
   - Otherwise: one LLM call produces both a narrative diagnosis (why the rule performed as it did) and the fix/new_rule verdict — whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
   - If fixable: `action: fix` with a description of the specific change to attempt.
   - If not fixable: `action: new_rule` — relation analysis starts fresh from the data.
@@ -324,7 +322,7 @@ Step 4 re-runs this check immediately at the start of every cycle rather than tr
 [idea generated] → [implemented] → [continue | replaced]
 ```
 
-Ideas are generated in step 5 and implemented immediately in step 6 — they are not queued or persisted separately; there is no backlog. Once implemented, a rule stays active for as long as "Plan next cycle" keeps deciding `continue`. There is no separate status classification or grace-period counter: replacement is decided fresh every cycle from `recent_avg_gain_pct + avg_transaction_gain` or `avg_transaction_gain` alone (§8.2 "Plan next cycle"). A replaced rule's file remains under `strategy/rules/` for signal traceability, but is no longer imported or executed once `plan.json` (§5.3) points elsewhere.
+Ideas are generated in step 5 and implemented immediately in step 6 — they are not queued or persisted separately; there is no backlog. Once implemented, a rule stays active for as long as "Plan next cycle" keeps deciding `continue`. There is no separate status classification or grace-period counter: replacement is decided fresh every cycle from `recent_avg_gain_pct` alone (§8.2 "Plan next cycle"). A replaced rule's file remains under `strategy/rules/` for signal traceability, but is no longer imported or executed once `plan.json` (§5.3) points elsewhere.
 
 ---
 

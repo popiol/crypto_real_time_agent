@@ -15,7 +15,7 @@ rule_evaluation.json snapshot plus the same LLM call's narrative diagnosis,
 reusing one LLM call for both the fix/new_rule verdict and the trace's
 diagnosis text rather than making two. This replaces writing a trace eagerly
 on the first cycle after implementation (when a rule can only ever show
-zero signals, since resolution takes 24h-20 days) — traces are meant to
+zero signals, since resolution takes up to 24h) — traces are meant to
 capture what a rule actually did, not its birth snapshot.
 
 Not a pipeline.py stage in its own right, and not one of the 6 numbered
@@ -50,11 +50,6 @@ from src.updater.llm import llm_structured
 from src.updater.models import EpisodicTrace, IndicatorSet, Plan, RelationAnalysis, RuleEvaluation, RuleScore
 
 logger = logging.getLogger(__name__)
-
-# Below this many closed transactions, avg_transaction_gain alone is too thin
-# a sample to trust on its own — blend it with recent signal performance.
-# At or above it, real realized performance is trusted exclusively.
-_MATURE_TRANSACTION_COUNT = 10
 
 _FAILURE_DIAGNOSIS_SYSTEM = (
     "You are a trading system analyst reviewing the outcome of a deployed rule. "
@@ -185,12 +180,13 @@ def write_next_cycle_plan(
     if rule_score.signal_count == 0 and rule_score.emitted_signal_count > 0:
         # The rule is actively firing but none of its signals have resolved
         # yet — a signal can only resolve via a matching opposite-direction
-        # signal or a 20-day timeout (see evaluator.py), so this is expected
-        # for a while regardless of how well the rule is actually
-        # performing. Treating unresolved as 0% gain would kill every rule
-        # before it ever gets a fair look. If it genuinely never emits any
-        # signal at all (emitted_signal_count == 0), fall through instead —
-        # that's a real failure, not a timing artifact.
+        # signal or a 24h timeout (see evaluator.py), so this is expected
+        # for the first cycle or two after it starts firing, regardless of
+        # how well the rule is actually performing. Treating unresolved as
+        # 0% gain would kill every rule before it ever gets a fair look. If
+        # it genuinely never emits any signal at all (emitted_signal_count
+        # == 0), fall through instead — that's a real failure, not a timing
+        # artifact.
         plan = _write("continue", None)
         logger.info(
             "plan.json written: action=continue (rule %s has %d emitted "
@@ -238,19 +234,8 @@ def write_next_cycle_plan(
 
 
 def _performance_metric(rule_score: RuleScore) -> tuple[float, str]:
-    """Return (value, metric_name) to judge a rule's performance by.
-
-    Below _MATURE_TRANSACTION_COUNT closed transactions: recent signal
-    performance plus realized transaction gain (same formula as portfolio.py's
-    own trading gate) — with few real trades, blending in the signal-level
-    metric gives a less noisy read. At or above it, avg_transaction_gain alone
-    — with enough real trades, trust what actually happened over the
-    signal-theoretical figure.
-    """
-    if rule_score.transaction_count < _MATURE_TRANSACTION_COUNT:
-        combined = rule_score.recent_avg_gain_pct + rule_score.avg_transaction_gain
-        return combined, "recent_avg_gain_pct+avg_transaction_gain"
-    return rule_score.avg_transaction_gain, "avg_transaction_gain"
+    """Return (value, metric_name) to judge a rule's performance by."""
+    return rule_score.recent_avg_gain_pct, "recent_avg_gain_pct"
 
 
 # ── Episodic trace (written only when a rule is retired) ───────────────────────

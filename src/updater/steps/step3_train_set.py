@@ -4,9 +4,10 @@ evaluated signal to train_set.json.
 For each signal that now has an evaluated outcome, appends a TrainSample
 using the indicator values already captured on the signal at emission time
 (src.agent.loop._attach_indicators) — not recomputed here, since by the time
-a signal resolves (up to 20 days later) the tier data that produced its
-original indicator readings has long since rolled off. Uses signal_id for
-deduplication so re-runs don't produce duplicate entries.
+a signal resolves (~24h later) the tier data that produced its original
+indicator readings has already rolled at least partway off data.warm's
+rolling 24-hour window. Uses signal_id for deduplication so re-runs don't
+produce duplicate entries.
 
 Also prunes indicators that come back null across every new sample this
 cycle from indicator_set.json (moved here from the old standalone compute-

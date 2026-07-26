@@ -339,9 +339,11 @@ def reset_for_backtest(config: AppConfig) -> None:
 def read_signals(config: AppConfig) -> list[dict]:
     """Return all signal records with outcome nested as a dict (or None if unresolved).
 
-    gain_pct (the final outcome — sell-match or 20-day timeout) and
-    gain_24h_pct (a fixed 24h-later read, resolved independently and much
-    sooner — see evaluator.py) are populated on different timelines.
+    gain_pct (the final outcome — sell-match if one exists, else a 24h
+    timeout) and gain_24h_pct (a fixed 24h-later read, resolved independently
+    — see evaluator.py) both resolve at roughly the same ~24h mark now, but
+    are not the same thing: gain_pct reflects a real matching sell signal
+    whenever one exists before the timeout fires, gain_24h_pct never does.
     `outcome` is exposed as soon as *either* is available, so callers that
     only need "is there something to judge yet" aren't stuck waiting on
     gain_pct alone. Callers that specifically need the final settled result

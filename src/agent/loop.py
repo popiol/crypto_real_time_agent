@@ -54,7 +54,7 @@ def _attach_indicators(
 
     This is the only point in the system where a signal's pair still has its
     causally-correct tier data available (data.warm rolls off after 24h, so
-    recomputing later — once a signal resolves, up to 20 days on — would read
+    recomputing later — once a signal resolves, up to 24h on — would read
     stale/unrelated market state instead).
     """
     indicator_set = _indicators.load_indicator_set(Path(config.state_dir))
