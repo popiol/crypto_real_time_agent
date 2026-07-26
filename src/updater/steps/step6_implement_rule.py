@@ -92,6 +92,23 @@ LONG_ONLY_CONSTRAINT = (
     "bullish condition in the same rule — not as the rule's only/primary signal."
 )
 
+STATELESS_CONSTRAINT = (
+    "NO POSITION VISIBILITY (hard constraint): signal(data: MarketData) receives ONLY "
+    "market data — data is dict[str, PairData], nothing else. There is no data.positions, "
+    "data.portfolio, data.holdings, or any other way for a rule to see which pairs it "
+    "currently holds, an entry price, or how long a position has been open. Do NOT write "
+    "exit logic that depends on entry price (e.g. 'sell once price has dropped 2% from "
+    "where I bought' or 'sell once profit exceeds 3% from entry') — that state does not "
+    "exist inside signal() and any attempt to access it (a .positions attribute, a passed-"
+    "in argument, a module-level variable assumed to persist between calls) will crash or "
+    "silently do nothing, since signal() is a pure function called fresh each tick with no "
+    "memory of prior calls. Express SellSignal conditions using only what's visible in "
+    "`data` itself — a market-derived reversal condition, an indicator crossing back, a "
+    "time/candle-count condition — never a percentage move relative to an assumed entry "
+    "price. (The system matches a SellSignal to an open position purely by pair; it does "
+    "not need or use an entry price from the rule.)"
+)
+
 SIGNAL_FIELDS_CONSTRAINT = (
     "SIGNAL FIELDS (hard constraint): BuySignal/SellSignal have exactly these fields "
     "you may set: pair, timestamp, price, rule_id, confidence. Do NOT pass `indicators=` "
@@ -113,6 +130,7 @@ _IMPLEMENT_SYSTEM = (
     + DATA_WINDOW_CONSTRAINT
     + "\n\n" + LONG_ONLY_CONSTRAINT
     + "\n\n" + SIGNAL_FIELDS_CONSTRAINT
+    + "\n\n" + STATELESS_CONSTRAINT
 )
 
 _FIX_SYSTEM = (
@@ -123,6 +141,7 @@ _FIX_SYSTEM = (
     + DATA_WINDOW_CONSTRAINT
     + "\n\n" + LONG_ONLY_CONSTRAINT
     + "\n\n" + SIGNAL_FIELDS_CONSTRAINT
+    + "\n\n" + STATELESS_CONSTRAINT
 )
 
 _REFERENCE_RULE = """\
@@ -271,6 +290,17 @@ def _check_syntax(code: str) -> str | None:
             "custom exit parameters like profit_target_pct) crash the moment the "
             "rule fires. Remove the indicators= argument entirely."
         )
+    bad_attr = _find_position_state_access(tree)
+    if bad_attr is not None:
+        return (
+            f"Line {bad_attr}: signal() has no access to open-position/portfolio "
+            "state — there is no .positions/.portfolio/.holdings attribute anywhere "
+            "in this system. MarketData is plain market data only (dict[str, "
+            "PairData]); entry price and position bookkeeping live outside signal() "
+            "and are never passed into it. Remove this access and express exit "
+            "conditions using only market data (indicators, price levels, time), "
+            "not a value relative to an assumed entry price."
+        )
     return None
 
 
@@ -284,6 +314,19 @@ def _find_indicators_kwarg(tree: ast.AST) -> int | None:
         if not (isinstance(node.func, ast.Name) and node.func.id in ("BuySignal", "SellSignal")):
             continue
         if any(kw.arg == "indicators" for kw in node.keywords):
+            return node.lineno
+    return None
+
+
+_HALLUCINATED_POSITION_ATTRS = {"positions", "portfolio", "open_positions", "holdings"}
+
+
+def _find_position_state_access(tree: ast.AST) -> int | None:
+    """Return the line number of the first access to a nonexistent position/portfolio
+    attribute (e.g. data.positions), or None if there isn't one.
+    """
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _HALLUCINATED_POSITION_ATTRS:
             return node.lineno
     return None
 
