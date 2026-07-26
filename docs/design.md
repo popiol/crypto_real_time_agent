@@ -23,7 +23,7 @@ The Crypto Real-Time Agent is a locally-run Python application that continuously
            ▼                        ▼
   ┌──────────────────┐   ┌─────────────────────┐
   │  Tiered Storage  │   │   Signal Ledger     │
-  │  (local files)   │   │  (signals.json/db)  │
+  │  (SQLite)        │   │   (SQLite)          │
   └──────────────────┘   └──────────┬──────────┘
                                     │
                                     ▼
@@ -65,6 +65,8 @@ Kraken's public API allows up to 1 request per second per endpoint per IP (confi
 - Last trade price
 - Best bid price and volume
 - Best ask price and volume
+- 24-hour rolling volume (base currency, from Kraken Ticker)
+- Order book snapshot (top levels, bid/ask)
 - Derived: mid-price, bid/ask spread (absolute and relative)
 
 ---
@@ -87,21 +89,16 @@ A background job runs every hour to:
 1. Aggregate hot-tier ticks older than 24 hours into the warm tier (capped at the last 24 hourly candles).
 2. Recompute cold-tier monthly aggregates from any warm-tier candles that have rolled off, merging into the existing per-month row.
 
-### 4.3 File format
+### 4.3 Storage backend
 
-- **Hot tier**: append-only newline-delimited JSON (`.ndjson`) per currency pair.
-- **Warm tier**: one JSON array file per pair, replaced on each downsampling pass.
-- **Cold tier**: one JSON array file per pair, one entry per calendar month.
+All three tiers live as tables in a single SQLite database, `data/assets/agent.db` (`src/agent/db.py`), not separate per-pair files:
 
-Directory layout:
+- **Hot tier** — `hot_ticks` table, one row per poll per pair, indexed on `(pair, polled_at)`.
+- **Warm tier** — `warm_candles` table, one row per pair per hour (`PRIMARY KEY (pair, hour)`); reads are capped to the most recent 24 rows per pair (`ORDER BY hour DESC LIMIT 24`).
+- **Cold tier** — `cold_months` table, one row per pair per calendar month (`PRIMARY KEY (pair, month)`).
+- The signal ledger's `signals` table (§6) lives in the same database.
 
-```
-data/
-  <PAIR>/
-    hot.ndjson
-    warm.json
-    cold.json
-```
+The connection runs in WAL mode (`PRAGMA journal_mode=WAL`) for concurrent reader/writer access between the polling loop and the hourly downsampling job.
 
 ---
 
@@ -157,7 +154,7 @@ Each rule version has a unique `rule_id` formed from the rule name and version (
 
 ## 6. Signal Ledger
 
-Every buy signal emitted by the strategy is written to a persistent ledger (`data/signals.json` or a SQLite database — TBD based on scale).
+Every buy signal emitted by the strategy is written to a persistent ledger — the `signals` table in a SQLite database at `data/assets/agent.db` (see `src/agent/db.py`).
 
 ### 6.1 Signal record (at emission time)
 
@@ -310,22 +307,6 @@ The LLM generates exactly one idea per cycle, derived from the relation analysis
 
 Generates real, executable Python code from the idea persisted in step 6. Exactly one rule version is added per pipeline run, and it becomes the sole active rule by being written to `plan.json`, replacing whichever rule was previously active. The previous version's file is kept under `strategy/rules/` for signal traceability but is no longer imported or executed. Also records the cycle's outcome via "Plan next cycle" below — either `action: continue` for the newly-implemented rule, or (if implementation failed) a fresh diagnosis for the still-active rule.
 
-#### Plan next cycle
-*(not one of the 7 numbered steps — `plan_next_cycle.py` is called from step 5, step 6's failure path, and step 7, not once in sequence)*
-
-Decision logic, evaluated fresh every cycle against whichever rule is currently active:
-- If `rule_evaluation.json` has no entry for the rule yet, or the rule has zero *evaluated* signals (`signal_count == 0`) but is actively emitting them (`emitted_signal_count > 0`): `action: continue` — nothing to judge yet, since a signal can only resolve via a matching opposite-direction signal or a 20-day timeout (§7), and treating an unresolved rule as 0% gain would replace every rule before it ever gets a fair look.
-- If the rule genuinely never emits any signal at all (`signal_count == 0` and `emitted_signal_count == 0`): falls through to the check below like any other rule — this is a real failure (e.g. an indicator window exceeding the 24-candle warm-tier cap, §5.2), not a timing artifact, and should be diagnosed and replaced.
-- Otherwise, the metric judged depends on `transaction_count`, the number of transactions the portfolio has actually closed for the rule:
-  - Below 10 transactions: `recent_avg_gain_pct + avg_transaction_gain` — the same combined formula as the portfolio's own trading gate (§10.3). With few real trades, blending in the signal-theoretical figure gives a less noisy read; it degrades gracefully to just `recent_avg_gain_pct` while `transaction_count` is `0`, since `avg_transaction_gain` is `0.0` by construction until then.
-  - At 10 or more: `avg_transaction_gain` alone. With enough real trades to be a trustworthy sample, the realized result is trusted exclusively — a rule with a rosy theoretical `recent_avg_gain_pct` but real losses no longer gets a pass.
-  - If that metric > 0.5%: `action: continue` — leave the indicator set and the active rule alone.
-  - Otherwise: LLM attempts to diagnose whether the failure is fixable (wrong thresholds, wrong indicators) or the hypothesis itself was wrong.
-  - If fixable: `action: fix` with a description of the specific change to attempt.
-  - If not fixable: `action: new_rule` — relation analysis starts fresh from the data.
-
-Step 5 re-runs this check immediately at the start of every cycle rather than trusting the previous cycle's stale verdict: if the rule is still performing, the cycle ends there; if it's no longer performing, the cycle proceeds straight into relation analysis → idea → implementation in the same run, rather than waiting a full cycle to act. Whenever a rule is actually replaced (step 7), the plan written for the *next* cycle is always `continue` for the new rule — the old rule's diagnosis is never carried over and misapplied to its replacement, since the new rule hasn't had any chance yet to earn a verdict of its own.
-
 ### 8.3 Rule lifecycle
 
 ```
@@ -360,9 +341,30 @@ class IndicatorSet(BaseModel):
     indicators: list[Indicator]
     updated_at: str
 
+class Plan(BaseModel):
+    # plan.json — both "which rule is active" and "what to do next cycle"
+    rule_id: str | None          # None until step 7 first implements a rule
+    cycle_id: str | None         # cycle_id the active rule was implemented in
+    action: Literal["continue", "fix", "new_rule"]
+    description: str | None     # what to attempt; None when action is "continue"
+
+class RelationAnalysis(BaseModel):
+    positive_patterns: list[str]   # indicator combinations that correlated with positive outcomes
+    negative_patterns: list[str]   # indicator combinations that correlated with negative outcomes
+    key_indicators: list[str]      # most informative indicators for predicting outcome sign
+    suggested_direction: str       # proposed direction for the next rule idea
+
+class PendingRelationAnalysis(BaseModel):
+    # relation_analysis.json — step 5's output, handed off to step 6
+    cycle_id: str
+    plan: Plan
+    analysis: RelationAnalysis
+
 class TrainSample(BaseModel):
+    signal_id: str
     cycle_id: str
     pair: str
+    rule_id: str
     indicators: dict[str, float | None]
     target_gain_pct: float
 
@@ -412,16 +414,22 @@ class EpisodicTrace(BaseModel):
     embedding: list[float]
 
 class RuleIdea(BaseModel):
+    idea_id: str
     title: str
     description: str
     rationale: str
     pseudocode: str
-    kind: Literal["new_rule", "fix"]
-    target_rule: str | None     # rule_name of the rule to fix; None for new_rule
+    kind: Literal["new_rule", "modify_rule"]
+    target_rule: str | None     # rule_id of the rule to fix; None for new_rule
+    score: float | None
+    status: Literal["proposed", "evaluated", "implemented", "rejected"]
 
-class NextCyclePlan(BaseModel):
-    action: Literal["continue", "fix", "new_rule"]
-    description: str | None     # what to attempt; None when action is "continue"
+class PendingRuleIdea(BaseModel):
+    # rule_idea.json — step 6's output, handed off to step 7
+    cycle_id: str
+    idea: RuleIdea
+    plan: Plan
+    analysis: RelationAnalysis
 
 class ImplementedRule(BaseModel):
     idea_id: str
@@ -479,7 +487,8 @@ class Transaction(BaseModel):
     quantity: float
     buy_price: float
     sell_price: float
-    revenue: float      # net after fee
+    cost: float         # quantity * buy_price * (1 + fee)
+    revenue: float       # net after fee
     gain_pct: float
     opened_at: datetime
     closed_at: datetime
@@ -525,7 +534,7 @@ The main process runs a cooperative loop with the following periodic tasks:
 | Downsample hot → warm tier | Every hour |
 | Recompute cold-tier statistics | Every hour (after warm downsampling) |
 | Evaluate pending signal outcomes | Every hour |
-| Run Strategy Updater pipeline (all 8 steps) | Every 24 hours |
+| Run Strategy Updater pipeline (§8.2, steps 1-7) | Every 24 hours |
 
 ---
 
@@ -535,10 +544,10 @@ A single `config.yaml` at the project root controls:
 
 - Poll interval and backoff parameters
 - Hot-tier max tick retention count
-- Rule deprecation threshold and minimum signal count for scoring
+- Cycle success threshold (`cycle_success_threshold`) for the continue/fix/new_rule decision (§8.2 "Plan next cycle")
 - Data directory path (SQLite database + portfolio files live here)
 - State directory path (default: `data/state/`)
-- LLM model name (e.g.: `claude-cli`)
+- LLM model name (e.g.: `gemini-2.5-flash`)
 - Backtesting data directory (default: `../crypto_alerts_llm/data/raw`)
 - Portfolio settings: `portfolio_initial_capital`, `portfolio_min_recent_gain`, `portfolio_fee`
 
