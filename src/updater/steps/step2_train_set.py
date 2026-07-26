@@ -1,4 +1,4 @@
-"""Update train set — design.md §8.2 Step 3. Appends one sample per
+"""Update train set — design.md §8.2 Step 2. Appends one sample per
 finally-settled signal to train_set.json.
 
 For each signal that now has a final settled outcome (gain_pct — a real

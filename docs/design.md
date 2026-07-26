@@ -223,22 +223,18 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | `data/state/train_set.json` | Accumulating samples of (indicator values captured at signal emission, open/close timestamps, final settled gain) — one per finally-settled signal, across all cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
 | `data/state/plan.json` | `{rule_id, cycle_id, action, description}` — `plan_next_cycle.py`'s single record of both "which rule is active" and "what to do next cycle". `rule_id`/`cycle_id` identify the most recently implemented rule (signal outcomes lag implementation by design, 24h+ to resolve, so this is how later steps know which rule they're following up on); `action`/`description` are `continue`, or `fix`/`new_rule` with a description of what to attempt |
-| `data/state/relation_analysis.json` | `{cycle_id, plan, analysis}` — step 4's output, handed off to step 5; cleared once consumed |
+| `data/state/relation_analysis.json` | `{cycle_id, plan, analysis}` — step 3's output, handed off to step 5; cleared once consumed |
 | `data/state/rule_idea.json` | `{cycle_id, idea, plan, analysis}` — step 5's output, handed off to step 6; cleared once consumed |
 
 ### 8.2 Pipeline steps
 
 All steps that involve reasoning use the LLM (see section 9). Each step reads its inputs from persisted files and writes its output before the pipeline moves on, making the whole run resumable and auditable. The pipeline runs every 24 hours.
 
-The 6 steps below are numbered by `pipeline.py`'s actual call order — every physical filename carries the same number (`stepN_...py`), so there is exactly one numbering scheme, visible from the filename alone. `plan_next_cycle.py` is not one of the 6: its decision logic runs at multiple points across them (a re-check at the start of step 4, and outcome-recording in steps 5 and 6), so it doesn't fit a single numbered slot — see the unnumbered subsection at the end of this list. There is no dedicated "write episodic trace" step either — that used to be its own step, but it only ever ran on the first cycle after a rule was implemented, when no signal could possibly have resolved yet (resolution takes ~24h), so every trace ever written showed zero signals. Trace-writing now happens inside "Plan next cycle," at the moment a rule is actually retired, capturing its real final performance instead.
+The 6 steps below are numbered by `pipeline.py`'s actual call order — every physical filename carries the same number (`stepN_...py`), so there is exactly one numbering scheme, visible from the filename alone. `plan_next_cycle.py` is not one of the 6: its decision logic runs at multiple points across them (a re-check at the start of step 3, and outcome-recording in steps 5 and 6), so it doesn't fit a single numbered slot — see the unnumbered subsection at the end of this list. There is no dedicated "write episodic trace" step either — that used to be its own step, but it only ever ran on the first cycle after a rule was implemented, when no signal could possibly have resolved yet (resolution takes ~24h), so every trace ever written showed zero signals. Trace-writing now happens inside "Plan next cycle," at the moment a rule is actually retired, capturing its real final performance instead.
 
-#### Step 1 — Update indicator set
-*Inputs*: `data/state/plan.json`, `data/state/indicator_set.json`  
-*Output*: `data/state/indicator_set.json` (updated)
+Indicator set revision (step 4) deliberately runs *after* the continue-recheck (step 3), not before: it used to run first (position 1), which meant it only ever saw `plan.json`'s action as it stood at the *start* of the cycle — before step 3's own recheck could flip it. A rule replaced later in that same cycle would never get its indicator set reconsidered, since the newly-implemented rule's `plan.json` gets reset straight back to `continue`, and the next cycle's now-earlier indicator step would just see `continue` again. Running it after step 3 means it always sees this cycle's *final* verdict.
 
-Skipped if `plan.json` has `action: continue` (previous cycle was successful — gain > 0.5%). Otherwise, the LLM reviews the current indicator set in light of the plan and may add, remove, or modify indicators. For each change, the LLM generates a Python function that computes the indicator from `PairData` (hot/warm/cold tiers). The updated set is persisted.
-
-#### Step 2 — Evaluate outcomes and score the active rule
+#### Step 1 — Evaluate outcomes and score the active rule
 *Inputs*: signal ledger (signals with a resolved outcome, §6.2), prior `rule_evaluation.json`  
 *Output*: `rule_evaluation.json` (updated — one entry, for the current active rule)
 
@@ -257,19 +253,25 @@ Computes metrics for the currently active rule:
 
 `rule_evaluation.json` accumulates one entry per rule ever evaluated: the active rule's entry is refreshed each cycle; every other rule_id's entry is carried over unchanged from whenever it was last active. There is no `status` field — whether to keep or replace the active rule is decided purely from `recent_avg_gain_pct` (see "Plan next cycle" below), not from a separate classification.
 
-#### Step 3 — Update train set
+#### Step 2 — Update train set
 *Inputs*: signal ledger (signals newly resolved this cycle, with their `indicators` captured at emission time, §6.1)  
 *Output*: `data/state/train_set.json` (new samples appended), `data/state/indicator_set.json` (dead indicators pruned)
 
 For each signal that now has a *final settled* outcome (`gain_pct` — a real sell-signal match or the 24h timeout, not just the fixed `gain_24h_pct` snapshot) and isn't already in the train set, appends `{signal_id, cycle_id, pair, rule_id, indicators, opened_at, closed_at, target_gain_pct}` using the `indicators` already stored on the signal record — nothing is recomputed here. `opened_at`/`closed_at` are the signal's `emitted_at` and the outcome's `evaluated_at`. The train set accumulates indefinitely across cycles. Any indicator that comes back null across every sample added this cycle is pruned from `indicator_set.json`, since that's the only point a fresh batch of real indicator readings is available to check.
 
-#### Step 4 — Relation analysis
+#### Step 3 — Relation analysis
 *Inputs*: `data/state/plan.json`, `data/state/train_set.json`, top-K episodic traces retrieved from `data/state/traces/` by semantic similarity to the current plan  
 *Output*: `data/state/plan.json` (re-checked), `data/state/relation_analysis.json` — `{cycle_id, plan, analysis}`, possibly a new file in `data/state/traces/<cycle_id>.json`
 
-First re-checks whether the active rule is still performing (see "Plan next cycle" below — this is also where a retired rule's episodic trace gets written) — if it's still performing, the step stops here and nothing downstream (steps 5-6) runs this cycle. Otherwise, the LLM receives a sample of the accumulated train set (indicator values paired with their resolved outcome) and the most relevant past traces, and identifies which indicator patterns preceded positive and negative outcomes, and what those relations suggest about the next rule to try. Indicator values only ever reach this step through `train_set.json` — they're captured once, at signal emission time (§6.1), and carried through to whichever cycle later resolves that signal's outcome (step 3), since only samples with a known outcome are useful for correlation. Traces are retrieved by embedding the current plan and performing cosine similarity search over trace hypothesis embeddings; top-K (default 5) most similar traces are included.
+First re-checks whether the active rule is still performing (see "Plan next cycle" below — this is also where a retired rule's episodic trace gets written) — if it's still performing, the step stops here and nothing downstream (steps 4-6) runs this cycle. Otherwise, the LLM receives a sample of the accumulated train set (indicator values paired with their resolved outcome) and the most relevant past traces, and identifies which indicator patterns preceded positive and negative outcomes, and what those relations suggest about the next rule to try. Indicator values only ever reach this step through `train_set.json` — they're captured once, at signal emission time (§6.1), and carried through to whichever cycle later resolves that signal's outcome (step 2), since only samples with a known outcome are useful for correlation. Traces are retrieved by embedding the current plan and performing cosine similarity search over trace hypothesis embeddings; top-K (default 5) most similar traces are included.
 
 `relation_analysis.json` is stamped with the `cycle_id` it was produced in, so step 5 can tell a fresh analysis apart from a stale leftover from a run where nothing consumed it.
+
+#### Step 4 — Update indicator set
+*Inputs*: `data/state/plan.json` (this cycle's *final* action, after step 3's recheck), `data/state/indicator_set.json`  
+*Output*: `data/state/indicator_set.json` (updated)
+
+Skipped if `plan.json` has `action: continue` (this cycle's rule is still performing — gain > 0.5%). Otherwise, the LLM reviews the current indicator set in light of the plan and may add, remove, or modify indicators. For each change, the LLM generates a Python function that computes the indicator from `PairData` (hot/warm/cold tiers). The updated set is persisted.
 
 #### Step 5 — Generate rule idea
 *Inputs*: `data/state/relation_analysis.json` (skipped if missing or stamped with a different cycle_id than the current one)  

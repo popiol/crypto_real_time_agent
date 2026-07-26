@@ -6,7 +6,7 @@ active rule (taken from plan.json) — never left to the LLM to guess, since
 exactly one rule is ever active (see strategy.py).
 
 run() is this pipeline.py stage's entry point: it reads relation_analysis.json,
-skipping if there's nothing there for the current cycle_id (either step4's
+skipping if there's nothing there for the current cycle_id (either step3's
 run decided action=continue and produced nothing, or a stale file from a run
 where nothing consumed it — either way, not fresh), otherwise generates one
 idea and persists it to rule_idea.json for step6_implement_rule.py's step to

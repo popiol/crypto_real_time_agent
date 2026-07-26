@@ -21,7 +21,7 @@ capture what a rule actually did, not its birth snapshot.
 Not a pipeline.py stage in its own right, and not one of the 6 numbered
 steps — this logic runs at three different points across them, not once in
 sequence:
-  - step4_relation_analysis.py — continue re-check before deciding whether
+  - step3_relation_analysis.py — continue re-check before deciding whether
     to bother analysing anything this cycle
   - step5_generate_idea.py — failure fallback if idea generation fails
   - step6_implement_rule.py — recording a successful implementation, or the

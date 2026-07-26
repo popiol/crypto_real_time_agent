@@ -6,7 +6,7 @@ fix → new version alongside the existing one), validating and self-correcting
 syntax errors via an LLM diff loop, then commits the new rule file to git.
 
 run() is this pipeline.py stage's entry point: it reads rule_idea.json,
-skipping if there's nothing there for the current cycle_id (either step4's
+skipping if there's nothing there for the current cycle_id (either step3's
 run decided action=continue and step5 never produced an idea, or a stale
 file from a run where nothing consumed it — either way, not fresh),
 otherwise implements it and records the outcome via plan_next_cycle.py.

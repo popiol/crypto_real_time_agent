@@ -22,10 +22,10 @@ from src.agent import storage
 from src.agent.models import AppConfig
 from src.updater import paths
 from src.updater.steps import (
-    step1_indicator_set,
-    step2_evaluate_rule,
-    step3_train_set,
-    step4_relation_analysis,
+    step1_evaluate_rule,
+    step2_train_set,
+    step3_relation_analysis,
+    step4_indicator_set,
     step5_generate_idea,
     step6_implement_rule,
 )
@@ -33,10 +33,10 @@ from src.updater.steps import (
 logger = logging.getLogger(__name__)
 
 _STEPS: list[tuple[str, Callable]] = [
-    ("1 indicator_set", step1_indicator_set.run),
-    ("2 evaluate_rule", step2_evaluate_rule.run),
-    ("3 train_set", step3_train_set.run),
-    ("4 relation_analysis", step4_relation_analysis.run),
+    ("1 evaluate_rule", step1_evaluate_rule.run),
+    ("2 train_set", step2_train_set.run),
+    ("3 relation_analysis", step3_relation_analysis.run),
+    ("4 indicator_set", step4_indicator_set.run),
     ("5 generate_idea", step5_generate_idea.run),
     ("6 implement_rule", step6_implement_rule.run),
 ]

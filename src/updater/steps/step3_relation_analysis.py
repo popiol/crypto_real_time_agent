@@ -1,4 +1,4 @@
-"""Relation analysis — design.md §8.2 Step 4.
+"""Relation analysis — design.md §8.2 Step 3.
 
 run() is this pipeline.py stage's entry point: it re-checks the current plan
 fresh (rather than trusting the previous cycle's stale verdict) — this is

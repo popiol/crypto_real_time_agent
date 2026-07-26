@@ -1,4 +1,4 @@
-"""Evaluate rule — design.md §8.2 Step 2.
+"""Evaluate rule — design.md §8.2 Step 1.
 
 For the currently active rule:
   - Generates a plain-language description via LLM (once per version; cached

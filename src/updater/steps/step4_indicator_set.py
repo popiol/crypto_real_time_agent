@@ -1,5 +1,14 @@
-"""Update indicator set — design.md §8.2 Step 1. Updates or bootstraps the
+"""Update indicator set — design.md §8.2 Step 4. Updates or bootstraps the
 LLM-defined indicator set.
+
+Runs right after step3_relation_analysis.py's step, so it always sees this
+cycle's *final* plan.json action (continue vs. fix/new_rule) rather than the
+previous cycle's stale verdict — step3's continue-recheck can flip the action
+mid-cycle, and running before that (as this used to, at pipeline position 1)
+meant a rule replaced this same cycle would never actually get its indicator
+set reconsidered until whichever *later* rule eventually failed too, since
+a freshly-implemented rule's own plan.json is reset straight back to
+'continue'.
 
 Skipped when plan.json has action='continue' and indicator_set.json already
 exists (previous cycle succeeded; no need to change what we measure).
