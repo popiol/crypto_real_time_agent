@@ -228,7 +228,7 @@ A periodic LLM-driven pipeline that evaluates strategy performance and evolves `
 | `data/state/indicator_set.json` | The current set of LLM-defined indicators: name, description, and generated Python code for each |
 | `data/state/train_set.json` | Accumulating samples of (indicator values captured at signal emission, open/close timestamps, final settled gain) — one per finally-settled signal, across all cycles |
 | `data/state/traces/` | Episodic trace store — one JSON file per cycle, immutable; contains hypothesis, indicator set version, outcome metrics, and LLM diagnosis |
-| `data/state/plan.json` | `{rule_id, cycle_id, action, prev_action, description}` — `plan_next_cycle.py`'s single record of both "which rule is active" and "what to do next cycle". `rule_id`/`cycle_id` identify the most recently implemented rule (signal outcomes lag implementation by design, 24h+ to resolve, so this is how later steps know which rule they're following up on); `action`/`description` are `continue`, or `fix`/`new_rule` with a description of what to attempt. `prev_action` is the action this write replaced, so a plain read shows the transition. `description` never resets to null when `action` becomes `continue` — it keeps the last real diagnosis around rather than discarding it |
+| `data/state/plan.json` | `{rule_id, cycle_id, action, prev_action, description}` — `plan_next_cycle.py`'s single record of both "which rule is active" and "what to do next cycle". `rule_id` identifies the currently active rule (signal outcomes lag implementation by design, 24h+ to resolve, so this is how later steps know which rule they're following up on); `cycle_id` is refreshed on *every* write, not just implementation, so it always reflects the pipeline's last-run cycle — a stale value reliably means the pipeline stopped running. `action`/`description` are `continue`, or `fix`/`new_rule` with a description of what to attempt. `prev_action` is the action this write replaced, so a plain read shows the transition. `description` never resets to null when `action` becomes `continue` — it keeps the last real diagnosis around rather than discarding it |
 | `data/state/relation_analysis.json` | `{cycle_id, plan, analysis}` — step 3's output, handed off to step 5; cleared once consumed |
 | `data/state/rule_idea.json` | `{cycle_id, idea, plan, analysis}` — step 5's output, handed off to step 6; cleared once consumed |
 
@@ -367,7 +367,7 @@ class IndicatorSet(BaseModel):
 class Plan(BaseModel):
     # plan.json — both "which rule is active" and "what to do next cycle"
     rule_id: str | None          # None until step 6 first implements a rule
-    cycle_id: str | None         # cycle_id the active rule was implemented in
+    cycle_id: str | None         # pipeline's last-run cycle (refreshed on every write, not just implementation)
     action: Literal["continue", "fix", "new_rule"]
     prev_action: Literal["continue", "fix", "new_rule"] | None   # the action this write replaced
     description: str | None     # what to attempt; keeps the last real value, never reset to null

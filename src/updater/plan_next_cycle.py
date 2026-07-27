@@ -158,16 +158,21 @@ def write_next_cycle_plan(
     config: AppConfig,
 ) -> Plan:
     """Re-evaluate current.rule_id and decide the plan for next cycle,
-    preserving rule_id/cycle_id (the active rule doesn't change here — only
-    implement_rule.py's step does that, via write_implemented). When the
-    rule is retired (action moves to fix/new_rule), also writes its episodic
-    trace, tagged with the current cycle_id (the retirement moment) rather
-    than the rule's original implementation cycle_id.
+    preserving rule_id (the active rule doesn't change here — only
+    implement_rule.py's step does that, via write_implemented). cycle_id is
+    refreshed to the current cycle on every write, so plan.json always shows
+    the pipeline's last-run cycle — a stale cycle_id then reliably means the
+    pipeline stopped running, not just that the same rule has stayed active
+    for a while. When the rule is retired (action moves to fix/new_rule),
+    also writes its episodic trace, tagged with this same current cycle_id
+    (the retirement moment) rather than the rule's original implementation
+    cycle_id.
     """
     plan_path = paths.plan(state_dir)
 
     def _write(action: Literal["continue", "fix", "new_rule"], description: str | None) -> Plan:
         plan = current.model_copy(update={
+            "cycle_id": cycle_id,
             "prev_action": current.action,
             "action": action,
             # Never null out the last real description — 'continue' branches

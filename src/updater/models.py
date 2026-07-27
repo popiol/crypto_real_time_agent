@@ -33,8 +33,13 @@ class Plan(BaseModel):
     """plan.json — the single source of truth for both "which rule is
     active" and "what to do next cycle". The two used to be separate files
     (last_implemented.json, next_cycle_plan.json) but are always read
-    together and rule_id/cycle_id only ever change alongside a fresh
-    action/description, so one record covers both.
+    together, so one record covers both.
+
+    cycle_id is refreshed on every write (not just when rule_id changes), so
+    it always reflects the pipeline's last-run cycle — a stale cycle_id
+    reliably means the pipeline stopped running, never just that the same
+    rule has stayed active for a while (which would be indistinguishable
+    from a stall if cycle_id only moved alongside rule_id).
 
     prev_action records the action this write replaced, so a plain read of
     plan.json shows the transition (e.g. fix -> continue), not just the
@@ -44,7 +49,7 @@ class Plan(BaseModel):
     """
 
     rule_id: str | None = None
-    cycle_id: str | None = None
+    cycle_id: str | None = None  # pipeline's last-run cycle (not necessarily rule_id's implementation cycle)
     action: Literal["continue", "fix", "new_rule"] = "new_rule"
     prev_action: Literal["continue", "fix", "new_rule"] | None = None
     description: str | None = None
