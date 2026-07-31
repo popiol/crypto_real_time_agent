@@ -223,24 +223,22 @@ def run(config: AppConfig, state_dir: Path, cycle_id: str) -> None:
         f" — {plan.description}" if plan.description else "",
         len(traces),
     )
-    try:
-        analysis = run_relation_analysis(state_dir, traces, config)
-        logger.info(
-            "Relation analysis: %d positive pattern(s), %d negative pattern(s), "
-            "key_indicators=%s | suggested_direction=%s",
-            len(analysis.positive_patterns),
-            len(analysis.negative_patterns),
-            analysis.key_indicators,
-            analysis.suggested_direction,
-        )
-    except Exception:
-        logger.exception("Relation analysis failed; using empty analysis")
-        analysis = RelationAnalysis(
-            positive_patterns=[],
-            negative_patterns=[],
-            key_indicators=[],
-            suggested_direction="No analysis available — explore a new rule direction.",
-        )
+    # No try/except here: a failed analysis (e.g. a transient LLM/network
+    # error) must not produce a fake empty one — that would let step 5/6
+    # generate and deploy a rule idea grounded in nothing, indistinguishable
+    # from a real "no patterns found" result. Better to let this propagate
+    # to pipeline.py's own per-step try/except, which logs it and skips the
+    # rest of this cycle entirely (no relation_analysis.json written means
+    # step 5 correctly skips idea generation too); next cycle retries fresh.
+    analysis = run_relation_analysis(state_dir, traces, config)
+    logger.info(
+        "Relation analysis: %d positive pattern(s), %d negative pattern(s), "
+        "key_indicators=%s | suggested_direction=%s",
+        len(analysis.positive_patterns),
+        len(analysis.negative_patterns),
+        analysis.key_indicators,
+        analysis.suggested_direction,
+    )
 
     pending = PendingRelationAnalysis(cycle_id=cycle_id, plan=plan, analysis=analysis)
     paths.relation_analysis(state_dir).write_text(
