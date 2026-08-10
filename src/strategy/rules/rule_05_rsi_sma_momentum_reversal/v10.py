@@ -4,7 +4,7 @@ from datetime import datetime
 from src.agent.models import BuySignal, MarketData, SellSignal, WarmCandle, Tick
 from pydantic import Field
 
-RULE_ID = "relaxed_extreme_oversold_reversal_v1"
+RULE_ID = "OversoldMomentumReversal_Fix"
 
 # Define lookback periods for indicators
 RSI_PERIOD = 14
@@ -12,22 +12,24 @@ ZSCORE_PERIOD = 20
 BB_PERIOD = 20
 BB_STD_DEV_MULTIPLIER = 2.0
 STOCH_K_PERIOD = 14
-# STOCH_D_PERIOD is not explicitly used in the rule's logic, but the helper function
-# requires it for calculating D values (which are then ignored by this rule).
-# We'll use a common default value.
-STOCH_D_PERIOD = 3 
+STOCH_D_PERIOD = 3 # Not used in rule logic, but required by helper function
+SMA_PERIOD = 5
 
 # Minimum candles required for all indicators to produce at least one value.
 # RSI(14) needs 14 + 1 = 15 candles for the first RSI value.
 # Z-Score(20) needs 20 candles.
 # BB Width(20) needs 20 candles.
 # Stochastic K(14) needs 14 candles for the first %K value.
-# The maximum lookback requirement is 20 candles.
+# SMA(5) for current candle needs 5 candles.
+# SMA(5) for previous candle (for crossover) needs 5 candles in warm_candles[:-1],
+# meaning warm_candles must have at least 6 candles.
+# The maximum lookback requirement is 20 candles for Z-Score and BB.
 MIN_CANDLES_FOR_ALL_INDICATORS = max(
     RSI_PERIOD + 1,
     ZSCORE_PERIOD,
     BB_PERIOD,
-    STOCH_K_PERIOD
+    STOCH_K_PERIOD,
+    SMA_PERIOD + 1 # for previous_sma_5 calculation, which needs warm_candles[:-1] to have at least SMA_PERIOD candles
 )
 
 
@@ -178,6 +180,20 @@ def calculate_stochastic_oscillator(candles: list[WarmCandle], period_k: int, pe
         
     return k_values, d_values
 
+def calculate_sma(candles: list[WarmCandle], period: int) -> float | None:
+    """
+    Calculates the Simple Moving Average (SMA) of the closing prices for the last 'period' candles.
+    Returns None if insufficient data.
+    """
+    if len(candles) < period:
+        return None
+    
+    closes = [c.close for c in candles[-period:]]
+    if not closes:
+        return None
+    
+    return statistics.mean(closes)
+
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
     signals: list[BuySignal | SellSignal] = []
@@ -186,7 +202,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         warm_candles = pair_data.warm
         hot_ticks = pair_data.hot
 
-        # Ensure enough warm candles for all indicators
+        # Ensure enough warm candles for all indicators, including lookback for crossover
         if len(warm_candles) < MIN_CANDLES_FOR_ALL_INDICATORS:
             continue
 
@@ -199,8 +215,11 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         timestamp = last_tick.polled_at
 
         # --- Prepare data for indicators ---
+        # Note: Pseudocode refers to current_candle and previous_candle using their close_price.
+        # We need at least 2 candles for this, which is covered by MIN_CANDLES_FOR_ALL_INDICATORS (20).
+        current_candle = warm_candles[-1]
+        previous_candle = warm_candles[-2]
         warm_closes = [c.close for c in warm_candles]
-        last_candle_close = warm_closes[-1]
 
         # --- Calculate Indicators ---
         
@@ -210,8 +229,8 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             continue
         current_rsi = rsi_values[-1]
 
-        # Price Z-Score (20) - using the last completed candle's close price as per pseudocode
-        price_z_score = calculate_price_z_score(warm_closes, ZSCORE_PERIOD, last_candle_close)
+        # Price Z-Score (20) - using the last completed candle's close price
+        price_z_score = calculate_price_z_score(warm_closes, ZSCORE_PERIOD, current_candle.close)
         if price_z_score is None:
             continue
 
@@ -226,19 +245,34 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             continue
         current_stoch_k = stoch_k_values[-1]
 
-        # --- BUY Signal Conditions (Relaxed Extreme Oversold Reversal with BB Contraction) ---
+        # SMA(5) for current and previous candles for crossover logic
+        current_sma_5 = calculate_sma(warm_candles, SMA_PERIOD)
+        if current_sma_5 is None:
+            continue
         
-        # Entry Condition:
-        # Price Z-Score < -2.0
-        # AND (RSI < 30 OR Stochastic K < 15)
-        # AND BB Width < 0.01
-        buy_condition = (
-            price_z_score < -2.0 and
-            (current_rsi < 30 or current_stoch_k < 15) and
-            bb_width < 0.01
+        previous_sma_5 = calculate_sma(warm_candles[:-1], SMA_PERIOD)
+        if previous_sma_5 is None:
+            continue
+
+        # --- BUY Signal Conditions ---
+        
+        oversold_conditions = (
+            current_rsi < 30 and
+            price_z_score < -1.5 and
+            current_stoch_k < 20
         )
 
-        if buy_condition:
+        bb_context = (
+            bb_width < 0.01 or
+            bb_width > 0.07
+        )
+
+        reversal_confirmation = (
+            current_candle.close > current_sma_5 and
+            previous_candle.close < previous_sma_5
+        )
+
+        if oversold_conditions and bb_context and reversal_confirmation:
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
@@ -249,15 +283,13 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         
         # --- SELL Signal Conditions (Exit existing long position) ---
         
-        # Exit Condition:
-        # RSI > 50
-        # OR Price Z-Score > -0.5
-        sell_condition = (
-            current_rsi > 50 or 
-            price_z_score > -0.5
+        # Loss of short-term momentum (bearish SMA(5) crossover)
+        loss_of_momentum = (
+            current_candle.close < current_sma_5 and
+            previous_candle.close > previous_sma_5
         )
 
-        if sell_condition:
+        if loss_of_momentum:
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
