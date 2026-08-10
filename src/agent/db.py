@@ -6,6 +6,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+_schema_initialized: set[str] = set()
+
 
 @contextmanager
 def open_db(data_dir: str):
@@ -15,7 +17,10 @@ def open_db(data_dir: str):
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    _ensure_schema(con)
+    key = str(path)
+    if key not in _schema_initialized:
+        _ensure_schema(con)
+        _schema_initialized.add(key)
     try:
         yield con
         con.commit()

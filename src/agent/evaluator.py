@@ -59,6 +59,7 @@ def _build_sell_index(sell_rows) -> dict[str, list[tuple[datetime, float]]]:
 
 
 def _update_24h_metrics(rows, now: datetime, config: AppConfig) -> None:
+    updates = []
     for row in rows:
         emitted_at = _parse_dt(row["emitted_at"])
         price_at_signal = row["price_at_signal"]
@@ -69,16 +70,19 @@ def _update_24h_metrics(rows, now: datetime, config: AppConfig) -> None:
             continue
         metrics = _compute_24h_metrics(row["pair"], emitted_at, price_at_signal, config)
         if metrics is not None:
-            with open_db(config.data_dir) as con:
-                con.execute(
-                    "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
-                    (metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], row["signal_id"]),
-                )
+            updates.append((metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], row["signal_id"]))
+    if updates:
+        with open_db(config.data_dir) as con:
+            con.executemany(
+                "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
+                updates,
+            )
 
 
 def _resolve_pending(
     pending, now: datetime, sell_index: dict[str, list[tuple[datetime, float]]], config: AppConfig
 ) -> None:
+    updates = []
     for row in pending:
         emitted_at = _parse_dt(row["emitted_at"])
         price_at_signal = row["price_at_signal"]
@@ -86,13 +90,17 @@ def _resolve_pending(
             continue
         outcome = _resolve_outcome(row["pair"], emitted_at, price_at_signal, now, sell_index, config)
         if outcome is not None:
-            with open_db(config.data_dir) as con:
-                con.execute(
-                    """UPDATE signals SET evaluated_at=?, exit_price=?, exit_reason=?, gain_pct=?
-                       WHERE signal_id=?""",
-                    (outcome["evaluated_at"], outcome["exit_price"],
-                     outcome["exit_reason"], outcome["gain_pct"], row["signal_id"]),
-                )
+            updates.append((
+                outcome["evaluated_at"], outcome["exit_price"],
+                outcome["exit_reason"], outcome["gain_pct"], row["signal_id"],
+            ))
+    if updates:
+        with open_db(config.data_dir) as con:
+            con.executemany(
+                """UPDATE signals SET evaluated_at=?, exit_price=?, exit_reason=?, gain_pct=?
+                   WHERE signal_id=?""",
+                updates,
+            )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
