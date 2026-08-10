@@ -193,7 +193,11 @@ def next_rule_path(idea: RuleIdea) -> tuple[str, Path]:
     if idea.kind == "modify_rule" and idea.target_rule:
         base = re.sub(r"_v\d+$", "", idea.target_rule)
         folder = RULES_DIR / base
-        existing = sorted(folder.glob("v*.py")) if folder.exists() else []
+        def _ver(p: Path) -> int:
+            m = re.match(r"v(\d+)\.py$", p.name)
+            return int(m.group(1)) if m else 0
+
+        existing = sorted(folder.glob("v*.py"), key=_ver) if folder.exists() else []
         if existing:
             m = re.match(r"v(\d+)\.py$", existing[-1].name)
             next_ver = (int(m.group(1)) + 1) if m else 2
