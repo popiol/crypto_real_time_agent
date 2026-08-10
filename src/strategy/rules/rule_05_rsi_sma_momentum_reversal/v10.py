@@ -1,46 +1,21 @@
 from __future__ import annotations
 import statistics
-from datetime import datetime
 from src.agent.models import BuySignal, MarketData, SellSignal, WarmCandle, Tick
-from pydantic import Field
 
-RULE_ID = "oversold_reversal_momentum_confirm"
+RULE_ID = "oversold_bounce_fix_v1"
 
 # Define lookback periods for indicators
 RSI_PERIOD = 14
 Z_SCORE_PERIOD = 20
-BBW_PERIOD = 20 # Bollinger Band Width period
 STOCH_K_PERIOD = 14
-STOCH_D_PERIOD = 3 # %D is not used in rule logic, but kept for consistency with common Stochastic implementations
+SMA_PERIOD = 5
 
-# Minimum candles required for all indicators to produce at least one value,
-# including 'previous' values for momentum confirmation.
-# RSI(14) needs 14+1 = 15 candles for one value. To get prev_rsi, we need 15 candles for warm_candles[:-1], so total 16.
+# Minimum candles required for all indicators to produce at least one value.
+# RSI(14) needs 14+1 = 15 candles.
 # Z-Score(20) needs 20 closes.
-# Stochastic K(14) needs 14 candles. To get prev_stoch_k, we need 14 candles for warm_candles[:-1], so total 15.
-# BBW(20) needs 20 closes.
-# The maximum lookback requirement is 20 candles for Z-Score and BBW.
-# This means we need at least 20 candles for the current values of Z-Score and BBW.
-# If len(warm_candles) is 20:
-#   - current_rsi will be calculated from 20 candles (enough for 15 required)
-#   - prev_rsi will be calculated from 19 candles (enough for 15 required)
-#   - current_z_score will be calculated from 20 closes (enough for 20 required)
-#   - current_stoch_k will be calculated from 20 candles (enough for 14 required)
-#   - prev_stoch_k will be calculated from 19 candles (enough for 14 required)
-#   - current_bb_width will be calculated from 20 closes (enough for 20 required)
-MIN_CANDLES_REQUIRED = max(
-    RSI_PERIOD + 1 + 1, # For prev_rsi: (period + 1) for a value, +1 for previous candle
-    Z_SCORE_PERIOD,
-    STOCH_K_PERIOD + 1, # For prev_stoch_k: period for a value, +1 for previous candle
-    BBW_PERIOD
-)
-# Recalculating:
-# RSI needs 15 for current. prev_rsi needs 15 for warm_candles[:-1]. So len(warm_candles)-1 >= 15 => len(warm_candles) >= 16.
-# Stoch K needs 14 for current. prev_stoch_k needs 14 for warm_candles[:-1]. So len(warm_candles)-1 >= 14 => len(warm_candles) >= 15.
-# Z-Score needs 20.
-# BBW needs 20.
-# So, min_candles = max(16, 20, 15, 20) = 20.
-MIN_CANDLES_REQUIRED = 20
+# Stochastic K(14) needs 14 candles.
+# SMA(5) needs 5 closes.
+MIN_CANDLES_REQUIRED = max(RSI_PERIOD + 1, Z_SCORE_PERIOD, STOCH_K_PERIOD, SMA_PERIOD)
 
 
 def calculate_rsi(candles: list[WarmCandle], period: int) -> float | None:
@@ -72,7 +47,7 @@ def calculate_rsi(candles: list[WarmCandle], period: int) -> float | None:
     rsi_val = 100 - (100 / (1 + rs))
 
     # Calculate subsequent RS and RSI values using Wilder's smoothing
-    # The loop should start from 'period' index in 'changes' list
+    # The loop should start from 'period' index in 'gains' and 'losses' lists
     for i in range(period, len(gains)):
         current_gain = gains[i]
         current_loss = losses[i]
@@ -102,13 +77,13 @@ def calculate_price_z_score(closes: list[float], period: int, current_price: flo
     recent_closes = closes[-period:]
 
     if not recent_closes: 
-        return None
+        return None # Should be caught by len(closes) < period check
 
     mean_closes = statistics.mean(recent_closes)
     
     if len(recent_closes) > 1:
         std_dev_closes = statistics.stdev(recent_closes)
-    else: # If only one data point, standard deviation is 0
+    else: # If only one data point or all identical, standard deviation is 0
         std_dev_closes = 0.0
 
     if std_dev_closes == 0:
@@ -145,33 +120,16 @@ def calculate_stochastic_oscillator(candles: list[WarmCandle], period_k: int, pe
     
     return k
 
-
-def calculate_bollinger_band_width(closes: list[float], period: int, num_std_dev: float = 2.0) -> float | None:
+def calculate_sma(candles: list[WarmCandle], period: int) -> float | None:
     """
-    Calculates the Bollinger Band Width for a list of closing prices.
-    BBW = (Upper Band - Lower Band) / Middle Band (SMA)
-    Returns the last BBW value.
+    Calculates the Simple Moving Average (SMA) for the last 'period' closing prices.
     Returns None if insufficient data.
     """
-    if len(closes) < period:
+    if len(candles) < period:
         return None
     
-    recent_closes = closes[-period:]
-    
-    sma = statistics.mean(recent_closes)
-    
-    if len(recent_closes) > 1:
-        std_dev = statistics.stdev(recent_closes)
-    else:
-        std_dev = 0.0 # Standard deviation is 0 for a single data point or identical values
-
-    # BBW = (Upper Band - Lower Band) / SMA = ( (SMA + N*std_dev) - (SMA - N*std_dev) ) / SMA
-    # BBW = (2 * N * std_dev) / SMA
-    
-    if sma == 0: # Avoid division by zero, especially if prices are all zero (highly unlikely)
-        return 0.0 
-    
-    return (2 * std_dev * num_std_dev) / sma
+    closes = [c.close for c in candles[-period:]]
+    return statistics.mean(closes)
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
@@ -181,7 +139,7 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         warm_candles = pair_data.warm
         hot_ticks = pair_data.hot
 
-        # Ensure enough warm candles for all indicators, including previous values
+        # Ensure enough warm candles for all indicators
         if len(warm_candles) < MIN_CANDLES_REQUIRED:
             continue
 
@@ -203,62 +161,49 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         if current_rsi is None: # Should not happen if MIN_CANDLES_REQUIRED check passes
             continue
         
-        # Previous RSI(14) for momentum confirmation
-        prev_rsi = calculate_rsi(warm_candles[:-1], RSI_PERIOD)
-        # prev_rsi can be None if warm_candles[:-1] is exactly period+1-1 = period candles long,
-        # but current_rsi needs period+1. Our MIN_CANDLES_REQUIRED handles this.
-        # If MIN_CANDLES_REQUIRED is 20, warm_candles[:-1] has 19 candles, which is enough for RSI(14) (needs 15).
-        if prev_rsi is None:
-             continue # Defensive check, should not be hit with correct MIN_CANDLES_REQUIRED
-
         # Price Z-Score (20) - using the last warm candle's close for the calculation base
         current_z_score = calculate_price_z_score(warm_closes, Z_SCORE_PERIOD, warm_candles[-1].close)
         if current_z_score is None:
             continue
 
         # Current Stochastic Oscillator %K (14)
-        current_stoch_k = calculate_stochastic_oscillator(warm_candles, STOCH_K_PERIOD, STOCH_D_PERIOD)
+        current_stoch_k = calculate_stochastic_oscillator(warm_candles, STOCH_K_PERIOD)
         if current_stoch_k is None:
             continue
-
-        # Previous Stochastic Oscillator %K (14) for momentum confirmation
-        prev_stoch_k = calculate_stochastic_oscillator(warm_candles[:-1], STOCH_K_PERIOD, STOCH_D_PERIOD)
-        # If MIN_CANDLES_REQUIRED is 20, warm_candles[:-1] has 19 candles, which is enough for Stoch K(14) (needs 14).
-        if prev_stoch_k is None:
-            continue # Defensive check
-
-        # Bollinger Band Width (20)
-        current_bb_width = calculate_bollinger_band_width(warm_closes, BBW_PERIOD)
-        if current_bb_width is None:
+        
+        # SMA(5)
+        sma_5 = calculate_sma(warm_candles, SMA_PERIOD)
+        if sma_5 is None:
             continue
 
         # --- Entry Conditions (BuySignal) ---
-        # Relaxed Oversold with Momentum Confirmation and Low Volatility Context
-        if (current_rsi < 35 and
-            current_rsi > prev_rsi and # RSI turning up
-            current_stoch_k < 20 and
-            current_stoch_k > prev_stoch_k and # Stochastic K turning up
+        # Extreme oversold conditions (RSI < 20, Price Z-Score < -1.5, Stochastic < 15)
+        # and quick price bounce confirmation (current price above SMA(5))
+        if (current_rsi < 20 and
             current_z_score < -1.5 and
-            current_bb_width < 0.015):
+            current_stoch_k < 15 and
+            current_last_price > sma_5):
             
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
                 price=current_last_price,
                 rule_id=RULE_ID,
-                confidence=1.0 # Default confidence
+                confidence=1.0
             ))
         
         # --- Exit Conditions (SellSignal) ---
-        # Overbought RSI, signaling a potential peak for the bounce
-        if (current_rsi > 60):
+        # If (rsi > 60 or stoch_k > 80 or current_price < sma_5)
+        if (current_rsi > 60 or 
+            current_stoch_k > 80 or 
+            current_last_price < sma_5):
             
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
                 price=current_last_price,
                 rule_id=RULE_ID,
-                confidence=1.0 # Default confidence
+                confidence=1.0
             ))
             
     return signals
