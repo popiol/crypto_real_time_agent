@@ -4,27 +4,26 @@ from datetime import datetime
 from src.agent.models import BuySignal, MarketData, SellSignal, WarmCandle, Tick
 from pydantic import Field
 
-RULE_ID = "oversold-volatility-reversal-v2"
+RULE_ID = "oversold-reversal-momentum-v1"
 
 # Define lookback periods for indicators
 RSI_PERIOD = 14
-ZSCORE_PERIOD = 20
-BB_PERIOD = 20
-BB_STD_DEV_MULTIPLIER = 2.0 # Standard deviation multiplier for Bollinger Bands
+Z_SCORE_PERIOD = 20
 STOCH_K_PERIOD = 14
-STOCH_D_PERIOD = 3 # %D is not used in rule logic, but required by helper function
+STOCH_D_PERIOD = 3 # %D is not used in rule logic, but kept for consistency with common Stochastic implementations
+SMA_PERIOD = 5
 
 # Minimum candles required for all indicators to produce at least one value.
 # RSI(14) needs 14 + 1 = 15 candles for the first RSI value.
 # Z-Score(20) needs 20 closes.
-# BB Width(20) needs 20 closes.
 # Stochastic K(14) needs 14 candles for the first %K value.
-# The maximum lookback requirement is 20 candles for Z-Score and BB.
+# SMA(5) needs 5 closes.
+# The maximum lookback requirement is 20 candles for Z-Score.
 MIN_CANDLES_FOR_ALL_INDICATORS = max(
     RSI_PERIOD + 1,
-    ZSCORE_PERIOD,
-    BB_PERIOD,
-    STOCH_K_PERIOD
+    Z_SCORE_PERIOD,
+    STOCH_K_PERIOD,
+    SMA_PERIOD
 )
 
 
@@ -102,38 +101,6 @@ def calculate_price_z_score(closes: list[float], period: int, current_price: flo
         return (current_price - mean_closes) / std_dev_closes
 
 
-def calculate_bollinger_band_width(candles: list[WarmCandle], period: int, std_dev_multiplier: float) -> float | None:
-    """
-    Calculates the Bollinger Band Width as (Upper Band - Lower Band) / Middle Band (SMA).
-    Returns None if insufficient data.
-    """
-    if len(candles) < period:
-        return None
-
-    closes = [c.close for c in candles[-period:]] # Use only the last 'period' closes
-
-    if not closes:
-        return None
-
-    sma = statistics.mean(closes)
-    
-    # Calculate standard deviation for the last 'period' closes
-    if len(closes) > 1:
-        std_dev = statistics.stdev(closes)
-    else:
-        std_dev = 0.0 # If only one data point, standard deviation is 0
-
-    # If SMA is zero (e.g., for non-price data, or highly unusual scenario), or no volatility
-    if sma == 0 or std_dev == 0:
-        return 0.0 # No width if no price or no volatility
-
-    upper_band = sma + (std_dev * std_dev_multiplier)
-    lower_band = sma - (std_dev * std_dev_multiplier)
-    
-    bb_width = (upper_band - lower_band) / sma # Relative width
-    return bb_width
-
-
 def calculate_stochastic_oscillator(candles: list[WarmCandle], period_k: int, period_d: int) -> float | None:
     """
     Calculates the Stochastic Oscillator %K for the last candle.
@@ -151,12 +118,24 @@ def calculate_stochastic_oscillator(candles: list[WarmCandle], period_k: int, pe
     current_close = period_candles[-1].close
 
     if (highest_high - lowest_low) == 0:
-        # If no range, %K is 0 if close is at low, 100 if at high, 50 otherwise (arbitrary for flat line)
+        # If no range, %K is 0.0 if close is at low, 100.0 if at high, 50.0 otherwise (arbitrary for flat line)
         k = 0.0 if current_close == lowest_low else (100.0 if current_close == highest_high else 50.0)
     else:
         k = ((current_close - lowest_low) / (highest_high - lowest_low)) * 100
     
     return k
+
+
+def calculate_sma(closes: list[float], period: int) -> float | None:
+    """
+    Calculates the Simple Moving Average (SMA) for a list of closing prices.
+    Returns the last SMA value.
+    Returns None if insufficient data.
+    """
+    if len(closes) < period:
+        return None
+    
+    return statistics.mean(closes[-period:])
 
 
 def signal(data: MarketData) -> list[BuySignal | SellSignal]:
@@ -179,8 +158,6 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
         timestamp = last_tick.polled_at
 
         # --- Prepare data for indicators ---
-        # The last completed hourly candle's close price
-        previous_candle_close = warm_candles[-1].close 
         warm_closes = [c.close for c in warm_candles]
 
         # --- Calculate Indicators ---
@@ -191,33 +168,30 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             continue
 
         # Price Z-Score (20) - using current_last_price against warm_closes
-        z_score_val = calculate_price_z_score(warm_closes, ZSCORE_PERIOD, current_last_price)
+        z_score_val = calculate_price_z_score(warm_closes, Z_SCORE_PERIOD, current_last_price)
         if z_score_val is None:
-            continue
-
-        # Bollinger Band Width (20)
-        bb_width_val = calculate_bollinger_band_width(warm_candles, BB_PERIOD, BB_STD_DEV_MULTIPLIER)
-        if bb_width_val is None:
             continue
 
         # Stochastic Oscillator (K=14) - only %K is used for this rule
         stoch_k_val = calculate_stochastic_oscillator(warm_candles, STOCH_K_PERIOD, STOCH_D_PERIOD)
         if stoch_k_val is None:
             continue
+            
+        # 5-period Simple Moving Average (SMA)
+        sma_5_val = calculate_sma(warm_closes, SMA_PERIOD)
+        if sma_5_val is None:
+            continue
 
         # --- Entry Conditions (BuySignal) ---
-        # 1. Broadened oversold conditions
-        oversold_rsi = rsi_val < 30
-        oversold_stoch = stoch_k_val < 20
+        # 1. Deeply oversold across multiple indicators
+        oversold_rsi = rsi_val < 35
         undervalued_zscore = z_score_val < -1.5
+        oversold_stoch_k = stoch_k_val < 25
 
-        # 2. Very low volatility (price compression)
-        low_volatility = bb_width_val < 0.01
+        # 2. Short-term bullish momentum confirmation
+        momentum_confirmation = current_last_price > sma_5_val
 
-        # 3. Bounce confirmation (current price shows a positive move from previous candle)
-        bounce_confirmation = current_last_price > previous_candle_close
-
-        if oversold_rsi and oversold_stoch and undervalued_zscore and low_volatility and bounce_confirmation:
+        if oversold_rsi and undervalued_zscore and oversold_stoch_k and momentum_confirmation:
             signals.append(BuySignal(
                 pair=pair,
                 timestamp=timestamp,
@@ -227,8 +201,9 @@ def signal(data: MarketData) -> list[BuySignal | SellSignal]:
             ))
         
         # --- Exit Conditions (SellSignal) ---
-        # 1. RSI recovery from oversold levels, indicating momentum shift
-        if rsi_val > 40:
+        # Close an existing long position if short-term bullish momentum breaks down
+        # (current price falls below the 5-period SMA).
+        if current_last_price < sma_5_val:
             signals.append(SellSignal(
                 pair=pair,
                 timestamp=timestamp,
