@@ -6,6 +6,8 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+_schema_initialized: set[str] = set()
+
 
 @contextmanager
 def open_db(data_dir: str):
@@ -15,7 +17,10 @@ def open_db(data_dir: str):
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
-    _ensure_schema(con)
+    key = str(path)
+    if key not in _schema_initialized:
+        _ensure_schema(con)
+        _schema_initialized.add(key)
     try:
         yield con
         con.commit()
@@ -83,6 +88,7 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             emitted_at       TEXT NOT NULL,
             price_at_signal  REAL NOT NULL,
             confidence       REAL,
+            indicators_json  TEXT,
             evaluated_at     TEXT,
             exit_price       REAL,
             exit_reason      TEXT,
@@ -91,6 +97,10 @@ def _ensure_schema(con: sqlite3.Connection) -> None:
             max_gain_24h_pct REAL
         )
     """)
+    con.execute(
+        "ALTER TABLE signals ADD COLUMN indicators_json TEXT"
+        if not _column_exists(con, "signals", "indicators_json") else "SELECT 1"
+    )
     con.execute("CREATE INDEX IF NOT EXISTS idx_signals_pair ON signals(pair, direction)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_signals_rule ON signals(rule_id)")
     con.commit()

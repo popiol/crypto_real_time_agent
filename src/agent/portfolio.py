@@ -2,9 +2,10 @@
 
 Runs on every data pull cycle:
   1. Fill any pending orders whose limit price has been reached.
-  2. Find the best rule by recent_avg_gain_pct from rule_evaluation.json.
-  3. If the best rule exceeds the configured threshold, place new orders
-     from its signals (buy 1/10 of current capital per signal).
+  2. Check whether the active rule (plan.json's rule_id) clears the
+     configured recent-gain threshold in rule_evaluation.json.
+  3. If it does, place new orders from its signals (buy 1/10 of current
+     capital per signal).
   4. Persist state to portfolio/portfolio.json and append fills to portfolio/transactions.json.
 """
 
@@ -18,6 +19,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from src.agent.models import AppConfig, BuySignal, SellSignal, Tick
+from src.updater import paths as _updater_paths
 
 logger = logging.getLogger(__name__)
 
@@ -323,19 +325,36 @@ def _place_sell(portfolio: Portfolio, signal: SellSignal, now: datetime) -> None
 
 
 def _find_best_rule(state_dir: str, min_gain: float) -> str | None:
-    path = Path(state_dir) / "rule_evaluation.json"
-    if not path.exists():
+    """Return the active rule's rule_id if its recent performance clears
+    min_gain, else None.
+
+    There is exactly one active rule at a time (see strategy.py) and
+    run_strategy() only ever emits signals tagged with it, so this must
+    resolve to that same rule_id — not "pick the best scorer from
+    rule_evaluation.json", which now accumulates history for every rule
+    ever evaluated, not just the current one.
+    """
+    plan_path = _updater_paths.plan(Path(state_dir))
+    if not plan_path.exists():
         return None
     try:
-        rules = json.loads(path.read_text(encoding="utf-8")).get("rules", [])
+        active_rule_id = json.loads(plan_path.read_text(encoding="utf-8"))["rule_id"]
+    except Exception:
+        logger.warning("Could not read plan.json for portfolio", exc_info=True)
+        return None
+    if active_rule_id is None:
+        return None
 
-        def _combined(r: dict) -> float:
-            return r.get("recent_avg_gain_pct", 0.0) + r.get("avg_transaction_gain", 0.0)
-
-        eligible = [r for r in rules if _combined(r) > min_gain]
-        if not eligible:
+    rule_eval_path = Path(state_dir) / "rule_evaluation.json"
+    if not rule_eval_path.exists():
+        return None
+    try:
+        rules = json.loads(rule_eval_path.read_text(encoding="utf-8")).get("rules", [])
+        active = next((r for r in rules if r.get("rule_id") == active_rule_id), None)
+        if active is None:
             return None
-        return max(eligible, key=_combined)["rule_id"]
+        combined = active.get("recent_avg_gain_pct", 0.0) + active.get("avg_transaction_gain", 0.0)
+        return active_rule_id if combined > min_gain else None
     except Exception:
         logger.warning(
             "Could not read rule_evaluation.json for portfolio", exc_info=True

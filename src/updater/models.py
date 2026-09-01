@@ -4,27 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel
-
-
-class PairMetrics(BaseModel):
-    pair: str
-    signal_count: int
-    avg_gain_pct: float
-    positive_rate: float
-
-
-class RuleSignalEvaluation(BaseModel):
-    rule_id: str
-    signal_count: int
-    positive_rate: float
-    avg_gain_pct: float
-    by_exit_reason: dict[str, int]
-    by_pair: list[PairMetrics]
-
-
-class SignalEvaluation(BaseModel):
-    rules: list[RuleSignalEvaluation]
+from pydantic import BaseModel, Field
 
 
 class RuleDescription(BaseModel):
@@ -36,20 +16,126 @@ class RuleDescriptions(BaseModel):
     rules: list[RuleDescription]
 
 
+class Indicator(BaseModel):
+    indicator_id: str
+    name: str
+    description: str
+    code: str  # def compute(data: PairData) -> float | None
+
+
+class IndicatorSet(BaseModel):
+    version: str        # uuid4, changes when the set is modified
+    indicators: list[Indicator]
+    updated_at: str
+
+
+class Plan(BaseModel):
+    """plan.json — the single source of truth for both "which rule is
+    active" and "what to do next cycle". The two used to be separate files
+    (last_implemented.json, next_cycle_plan.json) but are always read
+    together, so one record covers both.
+
+    cycle_id is refreshed on every write (not just when rule_id changes), so
+    it always reflects the pipeline's last-run cycle — a stale cycle_id
+    reliably means the pipeline stopped running, never just that the same
+    rule has stayed active for a while (which would be indistinguishable
+    from a stall if cycle_id only moved alongside rule_id).
+
+    prev_action records the action this write replaced, so a plain read of
+    plan.json shows the transition (e.g. fix -> continue), not just the
+    current state. description never resets to null when action becomes
+    'continue' — it keeps the last real diagnosis/description around instead
+    of discarding it, since that's still useful context even once acted on.
+    """
+
+    rule_id: str | None = None
+    cycle_id: str | None = None  # pipeline's last-run cycle (not necessarily rule_id's implementation cycle)
+    action: Literal["continue", "fix", "new_rule"] = "new_rule"
+    prev_action: Literal["continue", "fix", "new_rule"] | None = None
+    description: str | None = None
+
+
+class RelationAnalysis(BaseModel):
+    positive_patterns: list[str] = Field(
+        description="Indicator combinations or conditions that correlated with positive outcomes"
+    )
+    negative_patterns: list[str] = Field(
+        description="Indicator combinations or conditions that correlated with negative outcomes"
+    )
+    key_indicators: list[str] = Field(
+        description="Most informative indicators for predicting outcome sign"
+    )
+    suggested_direction: str = Field(
+        description="Proposed direction for the next rule idea, grounded in the observed patterns"
+    )
+
+
+class PendingRelationAnalysis(BaseModel):
+    """relation_analysis.json — step3_relation_analysis.py's output, handed
+    off to step5_generate_idea.py's step. cycle_id lets the reader tell a
+    fresh analysis (produced this same pipeline run) apart from a stale
+    leftover from a run where idea generation never got to consume it.
+    """
+
+    cycle_id: str
+    plan: Plan
+    analysis: RelationAnalysis
+
+
+class TrainSample(BaseModel):
+    signal_id: str
+    cycle_id: str
+    pair: str
+    rule_id: str
+    indicators: dict[str, float | None]
+    opened_at: str   # signal's emitted_at
+    closed_at: str   # outcome's evaluated_at (final settled outcome only)
+    target_gain_pct: float
+
+
+class TrainSet(BaseModel):
+    samples: list[TrainSample] = []
+
+
+class EpisodicTrace(BaseModel):
+    trace_id: str
+    cycle_id: str
+    hypothesis: str
+    rule_id: str
+    indicator_names: list[str] = []  # default covers pre-existing traces, written under the old indicator_set_version field
+    outcome_metrics: dict[str, float]
+    diagnosis: str
+    embedding: list[float] = []
+
+
+class GainByVolatility(BaseModel):
+    low: float | None = None
+    medium: float | None = None
+    high: float | None = None
+
+
 class RuleScore(BaseModel):
     rule_id: str
     description: str
     signal_count: int
+    emitted_signal_count: int = 0
     evaluation_days: int
     avg_gain_pct: float
     recent_avg_gain_pct: float
     avg_transaction_gain: float
+    transaction_count: int = 0
     positive_rate: float
     avg_gain_24h: float
     max_gain_24h: float
+    min_gain_pct: float = 0.0
+    p25_gain_pct: float = 0.0
+    p75_gain_pct: float = 0.0
+    longest_win_streak: int = 0
+    longest_loss_streak: int = 0
+    weekly_signal_counts: list[int] = []
+    signal_trend: Literal["increasing", "decreasing", "stable"] = "stable"
+    avg_gain_by_volatility: GainByVolatility = GainByVolatility()
     score: float
-    status: Literal["candidate", "active", "deprecate"]
-    zero_signal_cycles: int = 0
 
 
 class RuleEvaluation(BaseModel):
@@ -99,8 +185,17 @@ class RuleIdea(BaseModel):
     status: Literal["proposed", "evaluated", "implemented", "rejected"] = "proposed"
 
 
-class IdeaBacklog(BaseModel):
-    ideas: list[RuleIdea]
+class PendingRuleIdea(BaseModel):
+    """rule_idea.json — the idea step5_generate_idea.py's step produced this
+    cycle, handed off to step6_implement_rule.py's step. cycle_id lets the
+    reader tell a fresh idea (generated this same pipeline run) apart from a
+    stale leftover from a run where implementation never got to consume it.
+    """
+
+    cycle_id: str
+    idea: RuleIdea
+    plan: Plan
+    analysis: RelationAnalysis
 
 
 class ImplementedRule(BaseModel):

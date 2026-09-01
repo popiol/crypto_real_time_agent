@@ -11,12 +11,9 @@ import yaml
 
 from src.agent import evaluator, storage
 from src.agent.models import AppConfig
+from src.logging_config import configure_logging
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -27,19 +24,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
     return AppConfig.model_validate(raw)
 
 
-def _discover_pairs(config: AppConfig) -> list[str]:
-    if config.pairs:
-        return list(config.pairs)
-    from src.agent.db import open_db
-    with open_db(config.data_dir) as con:
-        rows = con.execute(
-            "SELECT DISTINCT pair FROM hot_ticks UNION SELECT DISTINCT pair FROM warm_candles"
-        ).fetchall()
-    return sorted(r["pair"] for r in rows)
-
-
 def run(config: AppConfig, reference_time=None) -> None:
-    pairs = _discover_pairs(config)
+    pairs = storage.discover_pairs(config)
     for pair in pairs:
         try:
             storage.downsample_hot_to_warm(pair, config)

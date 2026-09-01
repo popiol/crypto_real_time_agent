@@ -1,6 +1,6 @@
 """Strategy Updater pipeline orchestrator.
 
-Runs all 8 steps sequentially. Each step reads its inputs from persisted
+Runs all active steps sequentially. Each step reads its inputs from persisted
 state files and writes its output before the next step begins, making the
 pipeline resumable and auditable.
 
@@ -14,67 +14,69 @@ from __future__ import annotations
 
 import logging
 import shutil
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from src.agent import storage
 from src.agent.models import AppConfig
+from src.updater import paths
 from src.updater.steps import (
-    step1_analyze_results,
-    step2_analyze_rules,
-    step3_compare_versions,
-    step4_derive_conclusions,
-    step5_update_plan,
-    step6_generate_ideas,
-    step7_evaluate_ideas,
-    step8_implement_idea,
+    step1_evaluate_rule,
+    step2_train_set,
+    step3_relation_analysis,
+    step4_indicator_set,
+    step5_generate_idea,
+    step6_implement_rule,
 )
 
 logger = logging.getLogger(__name__)
 
 _STEPS: list[tuple[str, Callable]] = [
-    ("1 analyze_results", step1_analyze_results.run),
-    ("2 analyze_rules", step2_analyze_rules.run),
-    ("3 compare_versions", step3_compare_versions.run),
-    ("4 derive_conclusions", step4_derive_conclusions.run),
-    ("5 update_plan", step5_update_plan.run),
-    ("6 generate_ideas", step6_generate_ideas.run),
-    ("7 evaluate_ideas", step7_evaluate_ideas.run),
-    ("8 implement_idea", step8_implement_idea.run),
+    ("1 evaluate_rule", step1_evaluate_rule.run),
+    ("2 train_set", step2_train_set.run),
+    ("3 relation_analysis", step3_relation_analysis.run),
+    ("4 indicator_set", step4_indicator_set.run),
+    ("5 generate_idea", step5_generate_idea.run),
+    ("6 implement_rule", step6_implement_rule.run),
 ]
 
 
 _STATE_FILES = [
-    "signal_evaluation.json",
-    "rule_descriptions.json",
-    "rule_evaluation.json",
-    "version_comparison.json",
-    "conclusions.json",
-    "long_term_plan.json",
-    "idea_backlog.json",
+    paths.RULE_DESCRIPTIONS,
+    paths.RULE_EVALUATION,
+    paths.INDICATOR_SET,
+    paths.TRAIN_SET,
+    paths.PLAN,
 ]
 
 
 def run(config: AppConfig) -> None:
-    """Execute the full 8-step Strategy Updater pipeline."""
+    """Execute the Strategy Updater pipeline."""
     state_dir = Path(config.state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
 
-    logger.info("Strategy Updater pipeline starting")
+    # Computed once and threaded through every step, rather than each step
+    # independently re-deriving "what cycle is this" from quote data.
+    latest_quote = storage.latest_quote_time(config)
+    if latest_quote is None:
+        logger.info("No quote data yet; skipping Strategy Updater pipeline run")
+        return
+    cycle_id = latest_quote.strftime("%Y-%m-%dT%H-%M-%S")
+
+    logger.info("Strategy Updater pipeline starting (cycle_id=%s)", cycle_id)
     for name, step_fn in _STEPS:
         logger.info("Step %s", name)
         try:
-            step_fn(config, state_dir)
+            step_fn(config, state_dir, cycle_id)
         except Exception:
             logger.exception("Step %s failed; continuing with remaining steps", name)
     logger.info("Strategy Updater pipeline complete")
 
-    _archive_state(state_dir)
+    _archive_state(state_dir, cycle_id)
 
 
-def _archive_state(state_dir: Path) -> None:
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-    history_dir = state_dir / "history" / ts
+def _archive_state(state_dir: Path, cycle_id: str) -> None:
+    history_dir = paths.history_dir(state_dir, cycle_id)
     archived = 0
     for name in _STATE_FILES:
         src = state_dir / name

@@ -2,10 +2,13 @@
 
 Runs every hour. Evaluates pending buy signals:
   1. Sell signal match — exit price = sell signal price (treated as fill price).
-  2. Timeout — if no sell signal after 20 days, exit price = latest warm candle close.
+  2. Timeout — if no sell signal after 24 hours, exit price = latest warm candle close.
 
 Also tracks 24h metrics (gain_24h_pct, max_gain_24h_pct) while warm candles
 still cover the 24h window after signal emission (i.e. when signal is 24-48h old).
+This portfolio-independent timeout only affects signal-ledger evaluation, not
+the portfolio's own stale-position auto-close (portfolio.py, also 24h but
+tracked separately via each position's opened_at).
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from src.agent.models import AppConfig
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT = timedelta(days=20)
+_TIMEOUT = timedelta(hours=24)
 _24H = timedelta(hours=24)
 _24H_GRACE = timedelta(hours=48)
 
@@ -56,6 +59,7 @@ def _build_sell_index(sell_rows) -> dict[str, list[tuple[datetime, float]]]:
 
 
 def _update_24h_metrics(rows, now: datetime, config: AppConfig) -> None:
+    updates = []
     for row in rows:
         emitted_at = _parse_dt(row["emitted_at"])
         price_at_signal = row["price_at_signal"]
@@ -66,16 +70,19 @@ def _update_24h_metrics(rows, now: datetime, config: AppConfig) -> None:
             continue
         metrics = _compute_24h_metrics(row["pair"], emitted_at, price_at_signal, config)
         if metrics is not None:
-            with open_db(config.data_dir) as con:
-                con.execute(
-                    "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
-                    (metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], row["signal_id"]),
-                )
+            updates.append((metrics["gain_24h_pct"], metrics["max_gain_24h_pct"], row["signal_id"]))
+    if updates:
+        with open_db(config.data_dir) as con:
+            con.executemany(
+                "UPDATE signals SET gain_24h_pct=?, max_gain_24h_pct=? WHERE signal_id=?",
+                updates,
+            )
 
 
 def _resolve_pending(
     pending, now: datetime, sell_index: dict[str, list[tuple[datetime, float]]], config: AppConfig
 ) -> None:
+    updates = []
     for row in pending:
         emitted_at = _parse_dt(row["emitted_at"])
         price_at_signal = row["price_at_signal"]
@@ -83,13 +90,17 @@ def _resolve_pending(
             continue
         outcome = _resolve_outcome(row["pair"], emitted_at, price_at_signal, now, sell_index, config)
         if outcome is not None:
-            with open_db(config.data_dir) as con:
-                con.execute(
-                    """UPDATE signals SET evaluated_at=?, exit_price=?, exit_reason=?, gain_pct=?
-                       WHERE signal_id=?""",
-                    (outcome["evaluated_at"], outcome["exit_price"],
-                     outcome["exit_reason"], outcome["gain_pct"], row["signal_id"]),
-                )
+            updates.append((
+                outcome["evaluated_at"], outcome["exit_price"],
+                outcome["exit_reason"], outcome["gain_pct"], row["signal_id"],
+            ))
+    if updates:
+        with open_db(config.data_dir) as con:
+            con.executemany(
+                """UPDATE signals SET evaluated_at=?, exit_price=?, exit_reason=?, gain_pct=?
+                   WHERE signal_id=?""",
+                updates,
+            )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

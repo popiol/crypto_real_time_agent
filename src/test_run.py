@@ -15,13 +15,10 @@ from src.agent import backtest_collector, portfolio as _portfolio, storage
 from src.agent.loop import persist_signals, run_strategy
 from src.agent.models import AppConfig
 from src.analyze import run as analyze_run
+from src.logging_config import configure_logging
 from src.process import run as process_run
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
@@ -35,9 +32,10 @@ def load_config(path: str = "config.yaml") -> AppConfig:
 _ANALYZE_INTERVAL_CYCLES = 24  # one snapshot per hour → analyze once per day
 
 
-def run(config: AppConfig) -> None:
-    logger.info("Resetting all data for test run")
-    storage.reset_for_backtest(config)
+def run(config: AppConfig, clear: bool = False) -> None:
+    if clear:
+        logger.info("Clearing all data for test run")
+        storage.reset_for_backtest(config)
     logger.info("Starting test run from %s", config.backtest_data_dir)
 
     cycle = 0
@@ -70,9 +68,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Crypto test runner (historical replay)")
     parser.add_argument("config", nargs="?", default="config.yaml", help="Path to config YAML")
     parser.add_argument("--debug", action="store_true", help="Enable DEBUG logging")
+    parser.add_argument("--clear", action="store_true", help="Delete the data directory before starting")
     args = parser.parse_args()
 
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 
-    run(load_config(args.config))
+    run(load_config(args.config), clear=args.clear)

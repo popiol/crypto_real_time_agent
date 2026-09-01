@@ -1,3 +1,9 @@
+_bmad/
+.agents/
+.claude/*.*
+.claude/skills/*
+!.claude/skills/bmad-loop/
+
 data/
 
 # Byte-compiled / optimized / DLL files

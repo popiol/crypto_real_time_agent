@@ -88,6 +88,11 @@ class BuySignal(BaseModel):
     price: float
     rule_id: str = ""
     confidence: float | None = None
+    indicators: dict[str, float | None] = Field(
+        default_factory=dict,
+        description="Indicator values at signal time, filled in by src.agent.loop "
+        "right after find_signals() returns; empty until then",
+    )
 
 
 class SellSignal(BaseModel):
@@ -96,6 +101,11 @@ class SellSignal(BaseModel):
     price: float
     rule_id: str = ""
     confidence: float | None = None
+    indicators: dict[str, float | None] = Field(
+        default_factory=dict,
+        description="Indicator values at signal time, filled in by src.agent.loop "
+        "right after find_signals() returns; empty until then",
+    )
 
 
 class AppConfig(BaseModel):
@@ -108,16 +118,10 @@ class AppConfig(BaseModel):
     backoff_initial_seconds: float = 2.0
     backoff_max_seconds: float = 60.0
     llm_model: str = "gemini-2.0-flash"
-    rule_min_signals: int = 20
-    rule_mature_days: int = 7  # evaluation days before "mature" logic applies
-    rule_early_deprecation_gain: float = (
-        -0.10
-    )  # deprecate immediately below this avg gain (ratio)
-    rule_mature_deprecation_gain: float = (
-        0.0  # deprecate mature rule at or below this avg gain
-    )
-    rule_zero_signal_max_cycles: int = 7  # deprecate a rule that emits 0 signals for this many consecutive analysis cycles
     portfolio_initial_capital: float = 10000.0
     portfolio_min_recent_gain: float = 0.005
     portfolio_fee: float = 0.0025
     portfolio_max_position_hours: int = 24
+    embedding_model: str = "models/gemini-embedding-001"
+    trace_top_k: int = 5
+    cycle_success_threshold: float = 0.005  # avg_gain_pct above which a cycle is considered successful

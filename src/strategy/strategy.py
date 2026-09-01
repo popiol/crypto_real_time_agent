@@ -1,60 +1,78 @@
 """Strategy engine — signal detection.
 
-find_signals() is the only public entry point. It iterates ACTIVE_RULES and
-calls signal(data) on each rule module.
+find_signals() is the only public entry point. It resolves the currently
+active rule from persisted state (data/state/plan.json's rule_id) and calls
+signal(data) on it.
 
-To add a rule: create src/strategy/rules/<rule_name>/v1.py with a signal()
-function, then add an import and entry to ACTIVE_RULES below.
-To add a version: create v2.py alongside v1.py and add it to ACTIVE_RULES
-while it is being evaluated against the prior version.
+Exactly one rule is active at a time, matching the Strategy Updater's
+one-hypothesis-per-cycle learning loop: each cycle either fixes the current
+rule (a new version replaces it) or replaces it outright with a new rule
+concept. The active rule is *state*, not code: the Strategy Updater never
+edits this file — it only writes plan.json, and the rule module is imported
+dynamically from there on every call. Previous rule files are kept on disk
+under strategy/rules/ for signal traceability but are no longer executed
+once replaced.
 """
 
 from __future__ import annotations
 
+import importlib
+import json
 import logging
+import re
+from pathlib import Path
 from types import ModuleType
 
-import src.strategy.rules.rule_01_spread_compression.v1 as rule_01_spread_compression_v1
-import src.strategy.rules.rule_02_bollinger_band.v1 as rule_02_bollinger_band_v1
-import src.strategy.rules.rule_03_ou_spread.v1 as rule_03_ou_spread_v1
-import src.strategy.rules.rule_04_arima_forecast.v1 as rule_04_arima_forecast_v1
-import src.strategy.rules.rule_05_fft_cycle.v1 as rule_05_fft_cycle_v1
-import src.strategy.rules.rule_06_kalman_velocity.v1 as rule_06_kalman_velocity_v1
-import src.strategy.rules.rule_07_order_book_imbalance.v1 as rule_07_order_book_imbalance_v1
-import src.strategy.rules.rule_08_roc_momentum.v1 as rule_08_roc_momentum_v1
-import src.strategy.rules.rule_09_markov_chain.v1 as rule_09_markov_chain_v1
-import src.strategy.rules.rule_10_cnn_forecast.v1 as rule_10_cnn_forecast_v1
-import src.strategy.rules.rule_11_dqn_agent.v1 as rule_11_dqn_agent_v1
-import src.strategy.rules.rule_12_lead_lag.v1 as rule_12_lead_lag_v1
-from src.agent.models import BuySignal, MarketData, SellSignal
+from src.agent.models import AppConfig, BuySignal, MarketData, SellSignal
+from src.updater import paths
+
+logger = logging.getLogger(__name__)
 
 Signal = BuySignal | SellSignal
 
-ACTIVE_RULES: list[ModuleType] = [
-    rule_01_spread_compression_v1,
-    rule_02_bollinger_band_v1,
-    rule_03_ou_spread_v1,
-    rule_04_arima_forecast_v1,
-    rule_05_fft_cycle_v1,
-    rule_06_kalman_velocity_v1,
-    rule_07_order_book_imbalance_v1,
-    rule_08_roc_momentum_v1,
-    rule_09_markov_chain_v1,
-    rule_10_cnn_forecast_v1,
-    rule_11_dqn_agent_v1,
-    rule_12_lead_lag_v1,
-]
+
+def rule_id_to_import_path(rule_id: str) -> str:
+    """Convert 'rule_01_spread_compression_v1' -> 'rule_01_spread_compression.v1'."""
+    m = re.match(r"^(.+)_(v\d+)$", rule_id)
+    return f"{m.group(1)}.{m.group(2)}" if m else rule_id
 
 
-def find_signals(data: MarketData) -> list[Signal]:
+def get_active_rule(config: AppConfig) -> ModuleType | None:
+    """Dynamically import and return the currently active rule module.
+
+    Returns None if no rule has been implemented yet (first-ever cycle) —
+    plan.json's rule_id stays null until step6_implement_rule.py's step
+    successfully implements one.
+    """
+    plan_path = paths.plan(Path(config.state_dir))
+    if not plan_path.exists():
+        return None
+    try:
+        rule_id = json.loads(plan_path.read_text(encoding="utf-8"))["rule_id"]
+    except Exception:
+        logger.warning("Could not read plan.json for active rule", exc_info=True)
+        return None
+    if rule_id is None:
+        return None
+    import_path = rule_id_to_import_path(rule_id)
+    try:
+        return importlib.import_module(f"src.strategy.rules.{import_path}")
+    except Exception:
+        logger.exception("Could not import active rule '%s'", rule_id)
+        return None
+
+
+def find_signals(data: MarketData, config: AppConfig) -> list[Signal]:
+    rule = get_active_rule(config)
+    if rule is None:
+        return []
+    parts = rule.__name__.split(".")
+    rule_id = f"{parts[-2]}_{parts[-1]}"
     signals: list[Signal] = []
-    for rule in ACTIVE_RULES:
-        parts = rule.__name__.split(".")
-        rule_id = f"{parts[-2]}_{parts[-1]}"
-        try:
-            for signal in rule.signal(data):
-                signal.rule_id = rule_id
-                signals.append(signal)
-        except Exception:  # noqa: BLE001
-            logging.exception("Rule %s raised an exception", rule.__name__)
+    try:
+        for signal in rule.signal(data):
+            signal.rule_id = rule_id
+            signals.append(signal)
+    except Exception:  # noqa: BLE001
+        logger.exception("Rule %s raised an exception", rule.__name__)
     return signals

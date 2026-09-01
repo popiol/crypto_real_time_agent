@@ -11,13 +11,10 @@ import logging
 import yaml
 
 from src.agent.models import AppConfig
+from src.logging_config import configure_logging
 from src.updater import pipeline as updater_pipeline
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-)
+configure_logging()
 
 logger = logging.getLogger(__name__)
 

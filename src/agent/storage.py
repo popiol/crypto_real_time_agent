@@ -73,6 +73,24 @@ def read_ticks(pair: str, config: AppConfig) -> list[Tick]:
     return [_tick_from_row(r) for r in rows]
 
 
+def latest_quote_time(config: AppConfig) -> datetime | None:
+    """Return the polled_at of the most recent tick across all pairs, or None if no ticks exist."""
+    with open_db(config.data_dir) as con:
+        row = con.execute("SELECT MAX(polled_at) AS latest FROM hot_ticks").fetchone()
+    return _parse_dt(row["latest"]) if row and row["latest"] else None
+
+
+def discover_pairs(config: AppConfig) -> list[str]:
+    """Return the configured pairs, or every pair with any tracked data if none are configured."""
+    if config.pairs:
+        return list(config.pairs)
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT DISTINCT pair FROM hot_ticks UNION SELECT DISTINCT pair FROM warm_candles"
+        ).fetchall()
+    return sorted(r["pair"] for r in rows)
+
+
 def write_ticks(
     ticks: list[Tick],
     config: AppConfig,
@@ -158,6 +176,17 @@ def read_warm_candles(pair: str, config: AppConfig) -> list[WarmCandle]:
                  SELECT * FROM warm_candles WHERE pair=? ORDER BY hour DESC LIMIT 24
                ) ORDER BY hour ASC""",
             (pair,),
+        ).fetchall()
+    return [_candle_from_row(r) for r in rows]
+
+
+def read_warm_candles_range(pair: str, since: "datetime", config: AppConfig) -> list["WarmCandle"]:
+    """Return all warm candles for *pair* at or after *since*, oldest first."""
+    from datetime import datetime  # noqa: F401 (used in type hint string above)
+    with open_db(config.data_dir) as con:
+        rows = con.execute(
+            "SELECT * FROM warm_candles WHERE pair=? AND hour >= ? ORDER BY hour ASC",
+            (pair, since.isoformat()),
         ).fetchall()
     return [_candle_from_row(r) for r in rows]
 
@@ -308,7 +337,19 @@ def reset_for_backtest(config: AppConfig) -> None:
 
 
 def read_signals(config: AppConfig) -> list[dict]:
-    """Return all signal records with outcome nested as a dict (or None if unresolved)."""
+    """Return all signal records with outcome nested as a dict (or None if unresolved).
+
+    gain_pct (the final outcome — sell-match if one exists, else a 24h
+    timeout) and gain_24h_pct (a fixed 24h-later read, resolved independently
+    — see evaluator.py) both resolve at roughly the same ~24h mark now, but
+    are not the same thing: gain_pct reflects a real matching sell signal
+    whenever one exists before the timeout fires, gain_24h_pct never does.
+    `outcome` is exposed as soon as *either* is available, so callers that
+    only need "is there something to judge yet" aren't stuck waiting on
+    gain_pct alone. Callers that specifically need the final settled result
+    should check `outcome.get("gain_pct") is not None`, since gain_pct may
+    legitimately be absent from an outcome that only has gain_24h_pct so far.
+    """
     with open_db(config.data_dir) as con:
         rows = con.execute(
             "SELECT * FROM signals ORDER BY emitted_at ASC"
@@ -318,16 +359,17 @@ def read_signals(config: AppConfig) -> list[dict]:
 
 def _signal_row_to_dict(row) -> dict:
     outcome = None
-    if row["gain_pct"] is not None:
-        outcome = {
-            "evaluated_at": row["evaluated_at"],
-            "exit_price": row["exit_price"],
-            "exit_reason": row["exit_reason"],
-            "gain_pct": row["gain_pct"],
-        }
+    if row["gain_pct"] is not None or row["gain_24h_pct"] is not None:
+        outcome = {}
+        if row["gain_pct"] is not None:
+            outcome["evaluated_at"] = row["evaluated_at"]
+            outcome["exit_price"] = row["exit_price"]
+            outcome["exit_reason"] = row["exit_reason"]
+            outcome["gain_pct"] = row["gain_pct"]
         if row["gain_24h_pct"] is not None:
             outcome["gain_24h_pct"] = row["gain_24h_pct"]
             outcome["max_gain_24h_pct"] = row["max_gain_24h_pct"]
+    indicators = json.loads(row["indicators_json"]) if row["indicators_json"] else {}
     return {
         "signal_id": row["signal_id"],
         "direction": row["direction"],
@@ -336,5 +378,6 @@ def _signal_row_to_dict(row) -> dict:
         "emitted_at": row["emitted_at"],
         "price_at_signal": row["price_at_signal"],
         "confidence": row["confidence"],
+        "indicators": indicators,
         "outcome": outcome,
     }
